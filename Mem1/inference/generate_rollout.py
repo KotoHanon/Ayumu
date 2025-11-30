@@ -201,7 +201,11 @@ if __name__ == "__main__":
             results_dict['Exact_match'] = exact_match
 
             if client.has_memory:
-                results_dict["memories"] = client.memories
+                if inference_type in ["mem1", "amem"]:
+                    results_dict["memories"] = client.memories
+                elif inference_type == "ayumu":
+                    results_dict["semantic_memories"] = client.semantic_memories
+                    results_dict["episodic_memories"] = client.episodic_memories
             
             try:
                 if "multi" in args.data_file:
@@ -242,10 +246,10 @@ if __name__ == "__main__":
     row_data = [(index, row, llm_client, args.model) for index, row in train_data.iterrows()]
     
     # Use ThreadPoolExecutor to process rows in parallel
-    if args.use_amem:
+    if args.use_amem or args.use_ayumu:
         # we must run in a single thread
         # otherwise chromadb will clash
-        for row in row_data:
+        for row in tqdm(row_data):
             process_row(row)
     else:
         # otherwise we can use parallel workers

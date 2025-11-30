@@ -4,6 +4,7 @@ import re
 import random
 from openai import OpenAI
 import os
+import asyncio
 
 TOP_K = 3
 SEARCH_URL = "http://127.0.0.1:8013/retrieve"
@@ -102,7 +103,7 @@ class Pipeline(ABC):
 
 
 class Mem1Pipeline(Pipeline):
-    def __init__(self, llm_client, inference_type: Literal["normal", "amem" "mem1"]):
+    def __init__(self, llm_client, inference_type: Literal["normal", "amem", "mem1", "ayumu"]):
         super().__init__(llm_client)
         self.inference_type = inference_type
         
@@ -110,6 +111,7 @@ class Mem1Pipeline(Pipeline):
     def run_llm_loop(self, prompt, model="openai/gpt-4o-mini"):
         use_mem1 = self.inference_type == "mem1"
         is_compress_memory = self.inference_type in ["amem", "mem1"]
+        is_collect_slot = self.inference_type == "ayumu"
 
         cur_response = ""
         if use_mem1:
@@ -137,7 +139,7 @@ class Mem1Pipeline(Pipeline):
                 memory = cur_obs[len(prompt):]
             else:
                 memory = cur_obs
-            if self.llm_client.has_memory and memory:
+            if self.llm_client.has_memory and memory and self.inference_type == "amem":
                 self.llm_client.memory_system.add_note(memory)
             
             if internal_state:
@@ -174,6 +176,9 @@ class Mem1Pipeline(Pipeline):
             elif action_dict["type"] == "answer":
                 # Store final answer in results dictionary
                 results_dict[f"r{iteration_cnt}"] = cur_response
+                if is_collect_slot: # collect slots for transfering at the end
+                    asyncio.run(self.llm_client.transfer_context_to_memories(context=cur_obs))
+                    print(f"[Info] Number of WorkingSlot: {self.llm_client.slot_process.get_container_size()}")
                 return action_dict["content"], results_dict
             cur_obs = next_obs
 

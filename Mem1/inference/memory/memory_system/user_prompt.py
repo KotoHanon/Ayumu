@@ -97,6 +97,48 @@ Input WorkingSlot (JSON):
 {dump_slot_json}
 """)
 
+TRANSFER_QA_AGENT_CONTEXT_TO_WORKING_SLOT_PROMPT = dedent("""
+Convert the QA Agent workflow context into at most {max_slots} WorkingSlot entries ready for filtering/routing.
+
+Context Snapshot:
+<workflow-context>
+{snapshot}
+</workflow-context>
+
+Authoring rules:
+1. Each slot MUST capture a single reusable takeaway (decision, discovery, bottleneck, or command).
+2. `stage` MUST be one of: question_understanding, information_retrieval, answer_generation, answer_validation, meta.
+3. `summary` follows Situation → Action → Result whenever data exists; keep ≤130 words.
+4. `topic` is a 3–6 word slug referencing the problem space.
+5. `attachments` is optional but, when present, group similar info under keys such as
+    - "notes": {{"items": []}}
+    - "references": {{"links": []}}
+    - "issues": {{"list": []}}
+    - "actions": {{"list": []}}
+6. `tags` is a list of lowercase keywords (≤5 items) mixing domain + workflow hints.
+7. If the context lacks meaningful content, return `"slots": []` but keep the envelope.
+
+Output STRICTLY as JSON within the tags below:
+<working-slots>
+{{
+    "slots": [
+    {{
+        "stage": "answer_generation",
+        "topic": "data retrieval optimization",
+        "summary": "Situation/Action/Result narrative...",
+        "attachments": {{
+            "notes": {{"items": ["detail 1", "detail 2"]}},
+            "references": {{"links": ["http://example.com"]}},
+            "issues": {{"list": []}},
+            "actions": {{"list": ["follow-up 1"]}}
+        }},
+        "tags": ["optimization","retrieval"]
+    }}
+    ]
+}}
+</working-slots>
+""")
+
 TRANSFER_EXPERIMENT_AGENT_CONTEXT_TO_WORKING_SLOTS_PROMPT = dedent("""
 Convert the Experiment Agent workflow context into at most {max_slots} WorkingSlot entries ready for filtering/routing.
 
@@ -173,7 +215,7 @@ Output STRICTLY as JSON inside the tags:
 <episodic-record>
 {{
     "stage": "{stage}",
-    "summary": "≤80 word SAR overview",
+    "summary": "≤80 word Situation → Action → Result overview",
     "detail": {{
         "situation": "Context and constraints",
         "actions": ["action 1","action 2"],

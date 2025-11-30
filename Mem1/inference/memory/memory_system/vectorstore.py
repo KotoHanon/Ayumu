@@ -9,6 +9,7 @@ import numpy as np
 import json, os
 import faiss
 import re
+import torch
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -39,7 +40,7 @@ class VectorStore(ABC):
 
 class FaissVectorStore(VectorStore):
     def __init__(self, model_path: str = "./.cache/all-MiniLM-L6-v2", memory_type: str = "semantic"):
-        self.model = SentenceTransformer(os.path.join(base_dir, model_path))
+        self.model = SentenceTransformer(os.path.join(base_dir, model_path), device="cuda" if torch.cuda.is_available() else "cpu")
         self.memory_type = memory_type
         self.index = None
         self.dim = None

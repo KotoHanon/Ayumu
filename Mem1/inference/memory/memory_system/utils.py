@@ -69,7 +69,7 @@ def dump_slot_json(slot) -> str:
 def _extract_json_between(text: str, open_tag: str, close_tag: str) -> Dict[str, Any]:
     m = re.search(rf"<{re.escape(open_tag)}>\s*(\{{.*\}})\s*</{re.escape(close_tag)}>", text, flags=re.S)
     if not m:
-        raise ValueError(f"Missing <{open_tag}> JSON block.")
+        return {}
     try:
         return json.loads(m.group(1))
     except Exception as e:
@@ -144,6 +144,14 @@ def _safe_dump(self, value):
     if isinstance(value, dict):
         return {k: self._safe_dump(v) for k, v in value.items()}
     return self._truncate_text(str(value))
+
+def _safe_dump_str(self, value) -> str:
+    dumped = self._safe_dump(value)
+    try:
+        text = json.dumps(dumped, ensure_ascii=False)
+    except TypeError:
+        text = str(dumped)
+    return self._truncate_text(text)
 
 
 def _truncate_text(self, text: Optional[str], limit: int = 1500) -> Optional[str]:

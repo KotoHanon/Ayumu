@@ -10,6 +10,8 @@ from memory.memory_system.utils import (
     _safe_dump,
     _truncate_text,
     compute_overlap_score,
+    new_id,
+    now_iso,
 )
 from memory.memory_system.user_prompt import (
     WORKING_SLOT_COMPRESS_USER_PROMPT,
@@ -18,6 +20,7 @@ from memory.memory_system.user_prompt import (
     TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT,
     TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT,
     TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT,
+    TRANSFER_QA_AGENT_CONTEXT_TO_WORKING_SLOT_PROMPT
 )
 from textwrap import dedent
 from memory.memory_system import WorkingSlot, OpenAIClient, LLMClient
@@ -55,6 +58,9 @@ class SlotProcess:
         return scored_slots[:k]
         
     async def filter_and_route_slots(self) -> List[Dict[str, WorkingSlot]]:
+        self.filtered_slot_container = []
+        self.routed_slot_container = []
+
         for slot in self.slot_container.values():
             check_result = await slot.slot_filter(self.llm_model)
             print(check_result)
@@ -127,6 +133,54 @@ class SlotProcess:
         text = await self.llm_model.complete(system_prompt=system_prompt, user_prompt=user_prompt)
         return text
 
+    async def transfer_qa_agent_context_to_working_slots(self, context: str, max_slots: int = 20) -> List[WorkingSlot]:
+        system_prompt = (
+            "Your are an expert workflow archivist. "
+            "Transform the provided QA Agent context into WorkingSlot JSON objects. "
+            "Each slot must capture the stage, topic, summary (≤120 words), attachments, and tags. "
+            "Summaries must follow a Situation→Action→Result narrative whenever possible."
+        )
+
+        user_prompt = TRANSFER_QA_AGENT_CONTEXT_TO_WORKING_SLOT_PROMPT.format(
+            max_slots=max_slots,
+            snapshot=context,
+        )
+
+        response = await self.llm_model.complete(system_prompt=system_prompt, user_prompt=user_prompt)
+        data = _extract_json_between(response, "working-slots", "working-slots")
+        if not data:
+            return []
+        
+        slots_data = data.get("slots", [])
+        if not isinstance(slots_data, list):
+            raise ValueError("`slots` must be a list.")
+        
+        working_slots: List[WorkingSlot] = []
+        allowed_keys = {"stage", "topic", "summary", "attachments", "tags"}
+
+        for slot_dict in slots_data[:max_slots]:
+            if not isinstance(slot_dict, dict):
+                continue
+            _hard_validate_slot_keys(slot_dict, allowed_keys=allowed_keys)
+
+            stage = str(slot_dict.get("stage", "")).strip()
+            topic = str(slot_dict.get("topic", "")).strip()
+            summary = str(slot_dict.get("summary", "")).strip()
+            attachments = slot_dict.get("attachments") or {}
+            tags = slot_dict.get("tags") or []
+
+            slot = WorkingSlot(
+                stage=stage,
+                topic=topic,
+                summary=summary,
+                attachments=attachments,
+                tags=list(tags),
+            )
+
+            working_slots.append(slot)
+            
+        return working_slots
+
     async def transfer_experiment_agent_context_to_working_slots(self, context, state: str, max_slots: int = 50) -> List[WorkingSlot]:
         
         '''if not isinstance(context, WorkflowContext):
@@ -150,14 +204,7 @@ class SlotProcess:
         )
 
         response = await self.llm_model.complete(system_prompt=system_prompt, user_prompt=user_prompt)
-        payload = _extract_json_between(response, "working-slots", "working-slots")
-        if not payload:
-            return []
-
-        try:
-            data = json.loads(payload)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Failed to parse WorkingSlot JSON: {exc}") from exc
+        data = _extract_json_between(response, "working-slots", "working-slots")
 
         slots_data = data.get("slots", [])
         if not isinstance(slots_data, list):
@@ -233,11 +280,17 @@ class SlotProcess:
         summary = payload.get("summary") or slot.summary
         detail = payload.get("detail") or slot.summary
         tags = payload.get("tags") or slot.tags
+        sem_id = new_id(prefix="sem")
+        created_at = now_iso()
+        updated_at = now_iso()
 
         return {
+            "id": sem_id,
             "summary": summary.strip(),
             "detail": detail.strip(),
             "tags": list(tags),
+            "created_at": created_at,
+            "updated_at": updated_at,
         }
 
     async def transfer_slot_to_episodic_record(self, slot: WorkingSlot) -> Dict[str, Any]:
@@ -255,15 +308,18 @@ class SlotProcess:
         summary = payload.get("summary") or slot.summary
         detail = payload.get("detail") or {}
         tags = payload.get("tags") or slot.tags
-
+        epi_id = new_id(prefix="epi")
+        created_at = now_iso()
         if not isinstance(detail, dict):
             detail = {"notes": detail}
 
         return {
+            "id": epi_id,
             "stage": stage.strip(),
             "summary": summary.strip(),
             "detail": detail,
             "tags": list(tags),
+            "created_at": created_at,
         }
 
     async def transfer_slot_to_procedural_record(self, slot: WorkingSlot) -> Dict[str, Any]:
@@ -282,6 +338,9 @@ class SlotProcess:
         steps = payload.get("steps") or []
         code = payload.get("code")
         tags = payload.get("tags") or slot.tags
+        proc_id = new_id(prefix="proc")
+        created_at = now_iso()
+        updated_at = now_iso()
 
         if isinstance(steps, str):
             steps = [steps]
@@ -289,9 +348,12 @@ class SlotProcess:
         clean_steps = [step.strip() for step in steps if isinstance(step, str) and step.strip()]
 
         return {
+            "id": proc_id,
             "name": name.strip(),
             "description": description.strip(),
             "steps": clean_steps,
             "code": code.strip() if isinstance(code, str) else None,
             "tags": list(tags),
+            "created_at": created_at,
+            "updated_at": updated_at,
         }

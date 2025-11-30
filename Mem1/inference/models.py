@@ -11,7 +11,15 @@ from amem.memory_system import AgenticMemorySystem
 import abc
 from litellm import completion
 import os
+import asyncio
 from memory.api.faiss_memory_system_api import FAISSMemorySystem
+from memory.api.slot_process_api import SlotProcess
+from memory.memory_system.utils import (
+    _safe_dump_str,
+    new_id,
+    now_iso,
+)
+from memory.memory_system.models import EpisodicRecord, SemanticRecord
 
 
 logger = logging.getLogger(__name__)
@@ -190,7 +198,7 @@ class LiteLLMClient(BaseClient):
 class AMemClient(BaseClient):
     def __init__(self):
         assert "OPENAI_API_KEY" in os.environ, "OPENAI_API_KEY is not set"
-        assert "OPENROUTER_API_KEY" in os.environ, "OPENROUTER_API_KEY is not set"
+        #assert "OPENROUTER_API_KEY" in os.environ, "OPENROUTER_API_KEY is not set"
         litellm.drop_params = True
         # Initialize the memory system 🚀
         self.memory_system = AgenticMemorySystem(
@@ -254,19 +262,25 @@ class AyumuClient(BaseClient):
         #assert "OPENROUTER_API_KEY" in os.environ, "OPENROUTER_API_KEY is not set"
         litellm.drop_params = True
         # Initialize the memory system 🚀
+        self.slot_process = SlotProcess()
         self.semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_name="gpt-4.1-mini")
         self.episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_name="gpt-4.1-mini")
         #self.procedural_memory_system = FAISSMemorySystem(memory_type="procedural", llm_name="gpt-4.1-mini")
-        self.memories = []
+        self.semantic_memories = []
+        self.episodic_memories = []
 
 
     def chat_with_memories(self, message: str, model: str, temperature: float = 0.01, force_json: bool = False, user_id: str = "default_user") -> str:
         # Retrieve relevant memories
-        relevant_memories = self.memory_system.search_agentic(message, k=3)
-        memories_str = "\n".join(f"- {entry['content']}" for entry in relevant_memories)
-        self.memories.append(memories_str)
+        relevant_semantic_memories = self.semantic_memory_system.query(query_text=message, limit=3)
+        relevant_episodic_memories = self.episodic_memory_system.query(query_text=message, limit=3)
+        #relevant_memories = self.memory_system.search_agentic(message, k=3)
+        semantic_memories_str = "\n".join(f"- {entry['detail']}" for entry in relevant_semantic_memories)
+        episodic_memories_str = "\n".join(f"- {_safe_dump_str(entry['detail'])}" for entry in relevant_episodic_memories)
+        self.semantic_memories.append(semantic_memories_str)
+        self.episodic_memories.append(episodic_memories_str)
         # Generate Assistant response
-        system_prompt = f"You are a helpful AI. Answer the question based on query and memories.\nUser Memories:\n{memories_str}"
+        system_prompt = f"You are a helpful AI. Answer the question based on query and memories.\nUser Semantic Memories:\n{semantic_memories_str}. User Episodic Memories:\n{episodic_memories_str}"
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": message}]
 
         config = {
@@ -294,15 +308,37 @@ class AyumuClient(BaseClient):
     def generate_response(self, prompt, model="openai/gpt-4o-mini", temperature=0.01, force_json=False):
         return self.chat_with_memories(prompt, model=model, temperature=temperature, force_json=force_json)
 
+    async def transfer_context_to_memories(self, context: str):
+        # Clear the slot_container
+        self.slot_process.clear_container()
 
+        working_slots = await self.slot_process.transfer_qa_agent_context_to_working_slots(context=context)
+        for slot in working_slots:
+            self.slot_process.add_slot(slot)
+        
+        routed_slot_container = await self.slot_process.filter_and_route_slots()
+        inputs = await self.slot_process.generate_long_term_memory(routed_slots=routed_slot_container)
+
+        semantic_records = []
+        episodic_records = []
+
+        for i in inputs:
+            if i['memory_type'] == 'semantic':
+                semantic_records.append(SemanticRecord(**i['input']))
+            elif i['memory_type'] == 'episodic':
+                episodic_records.append(EpisodicRecord(**i['input']))
+        
+        self.semantic_memory_system.add(semantic_records)
+        self.episodic_memory_system.add(episodic_records)
+        
     @property
     def has_memory(self):
         return True
     
     def reset(self):
-        self.memory_system = AgenticMemorySystem(
-            model_name='all-MiniLM-L6-v2',  # Embedding model for ChromaDB
-            llm_backend="openai",           # LLM backend (openai/ollama)
-            llm_model="gpt-4o-mini"         # LLM model name
-        )
-        self.memories = []
+        self.slot_process = SlotProcess()
+        self.semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_name="gpt-4.1-mini")
+        self.episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_name="gpt-4.1-mini")
+        #self.procedural_memory_system = FAISSMemorySystem(memory_type="procedural", llm_name="gpt-4.1-mini")
+        self.semantic_memories = []
+        self.episodic_memories = []
