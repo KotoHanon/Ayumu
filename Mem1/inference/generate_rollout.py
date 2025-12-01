@@ -20,14 +20,16 @@ except Exception as e:
 from tqdm import tqdm
 import logging
 import hashlib
-
+from datetime import datetime
+import os
+from memory.memory_system.utils import setup_logger
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+log_filename = datetime.now().strftime("train_%Y%m%d_%H%M%S.log")
+logger = setup_logger("agent_output", log_path=os.path.join("inference/log/agent_output/", log_filename) ,level=logging.INFO)
 
 # turn off logger
-logging.getLogger().setLevel(logging.WARNING)
+#logging.getLogger().setLevel(logging.WARNING)
 
 ########################################################
 #  utils for reading the test data
@@ -164,8 +166,8 @@ if __name__ == "__main__":
             prompt = row["prompt"][0]["content"]
             pipeline = Mem1Pipeline(client, inference_type=inference_type)
             answer, results_dict = pipeline.run_llm_loop(prompt, model=model)
-
-            print(f"Generated answer: {answer}, Golden answer: {row['reward_model']['ground_truth']}")
+            logger.info(f"Generated answer: {answer}, Golden answer: {row['reward_model']['ground_truth']}")
+            #print(f"Generated answer: {answer}, Golden answer: {row['reward_model']['ground_truth']}")
 
             if "multi" in args.data_file:
                 answers = str(answer).split(";")
@@ -214,7 +216,6 @@ if __name__ == "__main__":
                 else:
                     results_dict['Model_estimated_match'] = model_estimated_match(answer, row['golden_answers'], prompt, client)
             except Exception as e:
-                logger.error(f"Error in model_estimated_match for index {index}: {str(e)}")
                 results_dict['Model_estimated_match'] = False
             
             # Thread-safe append to the results list
@@ -226,7 +227,6 @@ if __name__ == "__main__":
             
             return index
         except Exception as e:
-            logger.error(f"Error processing row at index {index}: {str(e)}", exc_info=True)
             # Add minimal error information to results
             result_dict = {
                     'index': index,

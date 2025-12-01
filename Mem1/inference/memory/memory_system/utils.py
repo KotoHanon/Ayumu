@@ -1,11 +1,36 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Iterable, Optional, Tuple, Any, Dict
-#from src.agents.experiment_agent.sub_agents.experiment_master.workflow_state_machine import WorkflowContext
+from pathlib import Path
 
-
+import logging
 import json, re
 import numpy as np
+
+def setup_logger(name: str, log_path: str, level=logging.INFO) -> logging.Logger:
+    log_path = Path(log_path)
+
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+
+    logger.handlers.clear()
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 文件 handler
+    fh = logging.FileHandler(str(log_path), encoding="utf-8")
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+    ))
+
+    logger.addHandler(fh)
+
+    logger.propagate = False
+
+    logger.info(f"logger[{name}] initialized, log file = {log_path}")
+
+    return logger
 
 
 def now_iso() -> str:

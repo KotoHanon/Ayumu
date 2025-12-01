@@ -15,14 +15,18 @@ import asyncio
 from memory.api.faiss_memory_system_api import FAISSMemorySystem
 from memory.api.slot_process_api import SlotProcess
 from memory.memory_system.utils import (
+    setup_logger,
     _safe_dump_str,
     new_id,
     now_iso,
 )
 from memory.memory_system.models import EpisodicRecord, SemanticRecord
+from datetime import datetime
+import os
 
+log_filename = datetime.now().strftime("train_%Y%m%d_%H%M%S.log")
+logger = setup_logger("retrieve_memory", log_path=os.path.join("inference/log/retrieve_memory/", log_filename) ,level=logging.INFO)
 
-logger = logging.getLogger(__name__)
 
 class BaseClient(abc.ABC):
     @abc.abstractmethod
@@ -276,11 +280,10 @@ class AyumuClient(BaseClient):
         epi_query_limit = min(3, self.episodic_memory_system.size // 5)
         relevant_semantic_memories = self.semantic_memory_system.query(query_text=message, limit=sem_query_limit)
         relevant_episodic_memories = self.episodic_memory_system.query(query_text=message, limit=epi_query_limit)
-
-        if len(relevant_semantic_memories) != 0:
-            print(f"[1st Semantic Memories Retrieved]: {relevant_semantic_memories[0][1].detail}")
-        if len(relevant_episodic_memories) != 0:
-            print(f"[1st Episodic Memories Retrieved]: {_safe_dump_str(relevant_episodic_memories[0][1].detail)}")
+        if len(relevant_semantic_memories) > 0:
+            logger.info(f"1st relevant_semantic_memories: {relevant_semantic_memories[0][1].detail}")
+        if len(relevant_episodic_memories) > 0:
+            logger.info(f"1st relevant_episodic_memories: {relevant_episodic_memories[0][1].detail}")
 
         semantic_memories_str = "\n".join(f"- {entry[1].detail}" for entry in relevant_semantic_memories)
         episodic_memories_str = "\n".join(f"- {_safe_dump_str(entry[1].detail)}" for entry in relevant_episodic_memories)
