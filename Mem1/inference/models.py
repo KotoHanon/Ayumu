@@ -216,6 +216,7 @@ class AMemClient(BaseClient):
     def chat_with_memories(self, message: str, model: str, temperature: float = 0.01, force_json: bool = False, user_id: str = "default_user") -> str:
         # Retrieve relevant memories
         relevant_memories = self.memory_system.search_agentic(message, k=3)
+        print("1st relevant_memories:", relevant_memories[0]['content'] if len(relevant_memories) > 0 else "None")
         memories_str = "\n".join(f"- {entry['content']}" for entry in relevant_memories)
         self.memories.append(memories_str)
         # Generate Assistant response
@@ -274,23 +275,28 @@ class AyumuClient(BaseClient):
         self.episodic_memories = []
 
 
-    def chat_with_memories(self, message: str, model: str, temperature: float = 0.01, force_json: bool = False, user_id: str = "default_user") -> str:
+    def chat_with_memories(self, quert_text: str, message: str, model: str, temperature: float = 0.01, force_json: bool = False, user_id: str = "default_user") -> str:
         # Retrieve relevant memories
         sem_query_limit = min(3, self.semantic_memory_system.size // 5)
         epi_query_limit = min(3, self.episodic_memory_system.size // 5)
-        relevant_semantic_memories = self.semantic_memory_system.query(query_text=message, limit=sem_query_limit)
-        relevant_episodic_memories = self.episodic_memory_system.query(query_text=message, limit=epi_query_limit)
+        if len(quert_text) > 0:
+            relevant_semantic_memories = self.semantic_memory_system.query(query_text=quert_text, limit=sem_query_limit, threshold=0.2)
+            relevant_episodic_memories = self.episodic_memory_system.query(query_text=quert_text, limit=epi_query_limit, threshold=0.2)
+        else:
+            relevant_semantic_memories = []
+            relevant_episodic_memories = []
+
         if len(relevant_semantic_memories) > 0:
-            logger.info(f"1st relevant_semantic_memories: {relevant_semantic_memories[0][1].detail}")
+            logger.info(f"1st relevant_semantic_memories: {relevant_semantic_memories[0][1].summary}")
         if len(relevant_episodic_memories) > 0:
             logger.info(f"1st relevant_episodic_memories: {relevant_episodic_memories[0][1].detail}")
 
-        semantic_memories_str = "\n".join(f"- {entry[1].detail}" for entry in relevant_semantic_memories)
+        semantic_memories_str = "\n".join(f"- {entry[1].summary}" for entry in relevant_semantic_memories)
         episodic_memories_str = "\n".join(f"- {_safe_dump_str(entry[1].detail)}" for entry in relevant_episodic_memories)
         self.semantic_memories.append(semantic_memories_str)
         self.episodic_memories.append(episodic_memories_str)
         # Generate Assistant response
-        system_prompt = f"You are a helpful AI. Answer the question based on query and memories.\nUser Semantic Memories:\n{semantic_memories_str}. User Episodic Memories:\n{episodic_memories_str}"
+        system_prompt = f"You are a helpful AI. Answer the question based on query and memories.\nUser Semantic Memories:\n{semantic_memories_str}. \nUser Episodic Memories:\n{episodic_memories_str}"
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": message}]
 
         config = {
@@ -314,16 +320,25 @@ class AyumuClient(BaseClient):
 
         return assistant_response
 
+    def generate_response(self, quert_text, prompt, model="openai/gpt-4o-mini", temperature=0.01, force_json=False):
+        return self.chat_with_memories(quert_text=quert_text, message=prompt, model=model, temperature=temperature, force_json=force_json)
 
-    def generate_response(self, prompt, model="openai/gpt-4o-mini", temperature=0.01, force_json=False):
-        return self.chat_with_memories(prompt, model=model, temperature=temperature, force_json=force_json)
-
-    async def transfer_context_to_memories(self, context: str):
+    async def transfer_context_to_memories(self, context: str, is_abstract: bool = False):
         # Clear the slot_container
+        print("[Info] Transferring working slots to memories...")
         self.slot_process.clear_container()
 
-        working_slots = await self.slot_process.transfer_qa_agent_context_to_working_slots(context=context)
-        if len(working_slots) == 0:
+        try:
+            working_slots = await self.slot_process.transfer_qa_agent_context_to_working_slots(context=context)
+            print("after await, len of working_slots =", len(working_slots) if working_slots is not None else None)
+        except Exception as e:
+            import traceback
+            print("[ERROR] transfer_qa_agent_context_to_working_slots failed:", repr(e))
+            traceback.print_exc()
+            return
+
+        if not working_slots:
+            print("[Info] No working slots returned.")
             return
         
         for slot in working_slots:
@@ -337,15 +352,29 @@ class AyumuClient(BaseClient):
 
         for i in inputs:
             if i['memory_type'] == 'semantic':
-                semantic_records.append(SemanticRecord(**i['input']))
+                semantic_records.append(self.semantic_memory_system.instantiate_sem_record(**i['input']))
             elif i['memory_type'] == 'episodic':
-                episodic_records.append(EpisodicRecord(**i['input']))
+                episodic_records.append(self.semantic_memory_system.instantiate_epi_record(**i['input']))
         
+        if is_abstract and len(episodic_records) > 0:
+            await self.abstract_episodic_records_to_semantic_record(episodic_records)
+
         self.semantic_memory_system.add(semantic_records)
         self.episodic_memory_system.add(episodic_records)
 
         print(f"[Info] Number of semantic memories: {self.semantic_memory_system.size}")
         print(f"[Info] Number of episodic memories: {self.episodic_memory_system.size}")
+
+    async def abstract_episodic_records_to_semantic_record(self, epi_records: List[EpisodicRecord], consistency_threshold: float = 0.8):
+        try:
+            abstract_result, cidmap2semrec = await self.episodic_memory_system.abstract_episodic_records(epi_records, consistency_threshold)
+            print(f"[Info] Number of abstracted semantic records: {len(abstract_result)}")
+            self.semantic_memory_system.upsert_abstract_semantic_records(abstract_result, cidmap2semrec)
+        except Exception as e:
+            import traceback
+            print("[ERROR] abstract_episodic_records_to_semantic_record failed:", repr(e))
+            traceback.print_exc()
+
         
     @property
     def has_memory(self):

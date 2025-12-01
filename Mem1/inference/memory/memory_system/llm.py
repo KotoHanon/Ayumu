@@ -14,7 +14,7 @@ class LLMClient(Protocol):
         ...
 
 class OpenAIClient:
-    def __init__(self, model: str = "gpt-4.1-mini", client: Optional[OpenAI] = None) -> None:
+    def __init__(self, model: str = "gpt-4o-mini", client: Optional[OpenAI] = None) -> None:
         self._client = client or OpenAI()
         self._model = model
 

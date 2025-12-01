@@ -87,6 +87,8 @@ if __name__ == "__main__":
                         help="Use mem1 inference style")
     parser.add_argument("--use_litellm", action="store_true", default=False,
                         help="Use LiteLLM client")
+    parser.add_argument("--abstract_memories", action="store_true", default=False,
+                        help="Use abstract memories (only for ayumu)")
     parser.add_argument("--resume_file", type=str, default=None,
                         help="Output file name")
     parser.add_argument("--data_file", type=str, default="Mem1/data/websearch_multi_3/test.parquet",
@@ -105,6 +107,8 @@ if __name__ == "__main__":
         inference_type = "amem"
     else:
         inference_type = "normal"
+
+    assert not(not(args.use_ayumu) and args.abstract_memories), "Abstract memories can only be used with Ayumu"
 
     if args.resume_file:
         file_path = args.resume_file
@@ -164,7 +168,7 @@ if __name__ == "__main__":
         try:
             # prompt = row['question']
             prompt = row["prompt"][0]["content"]
-            pipeline = Mem1Pipeline(client, inference_type=inference_type)
+            pipeline = Mem1Pipeline(client, inference_type=inference_type, abstract_memories=args.abstract_memories)
             answer, results_dict = pipeline.run_llm_loop(prompt, model=model)
             logger.info(f"Generated answer: {answer}, Golden answer: {row['reward_model']['ground_truth']}")
             #print(f"Generated answer: {answer}, Golden answer: {row['reward_model']['ground_truth']}")

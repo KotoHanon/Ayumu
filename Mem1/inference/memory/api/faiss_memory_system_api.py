@@ -141,10 +141,11 @@ class FAISSMemorySystem(MemorySystem):
         query_text: str, 
         method: str = "embedding", 
         limit: int = 5, 
+        threshold: float = 0.0,
         filters: Optional[Dict] = None) ->List[Tuple[float, Union[SemanticRecord, EpisodicRecord, ProceduralRecord]]]:
         limit = min(limit, self.size)
         try:
-            results = self.vector_store.query(query_text, method=method, limit=limit, filters=filters)
+            results = self.vector_store.query(query_text, method=method, limit=limit, threshold=threshold, filters=filters)
         except Exception as e:
             print(f"Error querying memories: {e}")
             results = []
@@ -246,6 +247,7 @@ class FAISSMemorySystem(MemorySystem):
             record: Union[SemanticRecord, EpisodicRecord, ProceduralRecord], 
             method: str = "embedding", 
             k: int = 5,
+            threshold: float = 0.0,
             filters: Optional[Dict] = None) -> List[Tuple[float, Union[SemanticRecord, EpisodicRecord, ProceduralRecord]]]:
         if isinstance(record, SemanticRecord):
             query_text = record.detail
@@ -255,7 +257,7 @@ class FAISSMemorySystem(MemorySystem):
             query_text = record.description
         
         try:
-            results = self.vector_store.query(query_text, method=method, limit=k, filters=filters)
+            results = self.vector_store.query(query_text, method=method, limit=k, threshold=threshold, filters=filters)
         except Exception as e:
             print(f"Error querying nearest records: {e}")
             results = []

@@ -145,7 +145,6 @@ class SlotProcess:
             max_slots=max_slots,
             snapshot=context,
         )
-
         response = await self.llm_model.complete(system_prompt=system_prompt, user_prompt=user_prompt)
         data = _extract_json_between(response, "working-slots", "working-slots")
         if not data:

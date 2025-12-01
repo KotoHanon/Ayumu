@@ -114,7 +114,8 @@ class FaissVectorStore(VectorStore):
     def query(self, 
             query_text: str, 
             method: str = "embedding", 
-            limit: int = 5, 
+            limit: int = 5,
+            threshold: float = 0.0, 
             filters: Optional[Dict] = None) -> List[Tuple[float, Union[SemanticRecord, EpisodicRecord, ProceduralRecord]]]:
         assert method in ["embedding", "bm25", "overlapping"], "Unsupported query method."
 
@@ -126,7 +127,7 @@ class FaissVectorStore(VectorStore):
             q = self._embed([query_text])
             D, I = self.index.search(q, limit)
             for score, _id in zip(D[0], I[0]):
-                if _id == -1:
+                if _id == -1 or score < threshold:
                     continue
                 md = self.meta.get(int(_id), {})
                 if filters:
@@ -137,7 +138,7 @@ class FaissVectorStore(VectorStore):
 
         elif method == "bm25":
             if self.memory_type == "semantic":
-                corpus = [record.detail for record in self.meta.values()]
+                corpus = [record.summary for record in self.meta.values()]
             elif self.memory_type == "episodic":
                 corpus = [record.summary for record in self.meta.values()]
             elif self.memory_type == "procedural":
@@ -151,7 +152,7 @@ class FaissVectorStore(VectorStore):
 
             for bmid in top_bmid:
                 fid = idmap2fid[bmid]
-                if fid == -1:
+                if fid == -1 or bm25_scores[bmid] < threshold:
                     continue
                 md = self.meta.get(int(fid), {})
                 if filters:
@@ -175,7 +176,7 @@ class FaissVectorStore(VectorStore):
             top_olid = sorted(range(len(overlap_scores)), key= lambda olid: overlap_scores[olid], reverse=True)[:limit]
             for olid in top_olid:
                 fid = idmap2fid[olid]
-                if fid == -1:
+                if fid == -1 or overlap_scores[olid] < threshold:
                     continue
                 md = self.meta.get(int(fid), {})
                 if filters:
