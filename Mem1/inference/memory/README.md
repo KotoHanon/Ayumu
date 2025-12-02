@@ -10,6 +10,7 @@
 | compress_slots      | ✅ Debugged |
 | query      | ✅ Debugged |
 | transfer_slot_to_text | ✅ Debugged |
+| transfer_qa_agent_context_to_working_slots | ✅ Debugged |
 | transfer_experiment_agent_context_to_working_slots | ❌ Not yet debugged |
 | generate_long_term_memory | ✅ Debugged |
 | transfer_slot_to_semantic_record | ✅ Debugged |
@@ -30,8 +31,8 @@
 | update   | ✅ Debugged |
 | delete    | ✅ Debugged |
 | query | ✅ Debugged |
-| abstract_episodic_records | ❌ Not yet debugged |
-| upsert_abstract_semantic_records | ❌ Not yet debugged |
+| abstract_episodic_records | ✅ Debugged |
+| upsert_abstract_semantic_records | ✅ Debugged |
 | get_nearest_k_records    | ✅ Debugged |
 | save   | ✅ Debugged |
 | load  | ✅ Debugged |

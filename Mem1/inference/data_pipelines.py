@@ -112,7 +112,7 @@ class Mem1Pipeline(Pipeline):
     def run_llm_loop(self, prompt, model="openai/gpt-4o-mini"):
         use_mem1 = self.inference_type == "mem1"
         use_ayumu = self.inference_type == "ayumu"
-        is_compress_memory = self.inference_type in ["amem", "mem1"]
+        is_compress_memory = self.inference_type in ["mem1", "ayumu", "amem"]
         is_collect_slot = self.inference_type == "ayumu"
 
         cur_response = ""
@@ -133,20 +133,23 @@ class Mem1Pipeline(Pipeline):
             if use_mem1:
                 cur_response = self.llm_client.make_completion(prompt, cur_obs, model=model, is_last_turn=iteration_cnt == MAX_ITERATION - 1)
             elif use_ayumu:
-                cur_response = self.llm_client.generate_response(query_text, cur_obs, model=model, )
+                cur_response = self.llm_client.generate_response(query_text, cur_obs, model=model)
             else:
                 cur_response = self.llm_client.generate_response(cur_obs, model=model)
 
             # for the current implementation, use <think></think> for storing the internal state
             internal_state = extract_internal_state(cur_response, tag="think")
-            print(f"[Debug] Iteration {iteration_cnt} Response: {cur_response}")
+            #print(f"[Debug] Iteration {iteration_cnt} Response: {cur_response}")
             
             if not is_compress_memory:
                 memory = cur_obs[len(prompt):]
             else:
                 memory = cur_obs
-            if self.llm_client.has_memory and memory and self.inference_type == "amem":
-                self.llm_client.memory_system.add_note(memory)
+            if self.llm_client.has_memory and memory 
+                if self.inference_type == "amem":
+                    self.llm_client.memory_system.add_note(memory)
+                elif self.inference_type == "ayumu":
+                    asyncio.run(self.llm_client.memory_system.transfer_context_to_slots(context=memory))
             
             if internal_state:
                 # Store summary in results dictionary
@@ -170,6 +173,8 @@ class Mem1Pipeline(Pipeline):
                 query_text = ""
                 return None, results_dict
             elif action_dict["type"] == "search":
+                if is_collect_slot and num_turns_left == 0: # collect slots for transfering at the end
+                    asyncio.run(self.llm_client.transfer_slots_to_memories(context=cur_obs, is_abstract=self.abstract_memories))
                 search_results = action_dict["content"]
                 search_results = f"<information>\n{hint}\n{search_results}\n</information>"
                 # Store search query in results dictionary
@@ -183,10 +188,10 @@ class Mem1Pipeline(Pipeline):
                 query_text = action_dict["query"]
             elif action_dict["type"] == "answer":
                 # Store final answer in results dictionary
-                query_text = ""
-                results_dict[f"r{iteration_cnt}"] = cur_response
                 if is_collect_slot: # collect slots for transfering at the end
                     asyncio.run(self.llm_client.transfer_context_to_memories(context=cur_obs, is_abstract=self.abstract_memories))
+                query_text = ""
+                results_dict[f"r{iteration_cnt}"] = cur_response
                 return action_dict["content"], results_dict
             cur_obs = next_obs
 

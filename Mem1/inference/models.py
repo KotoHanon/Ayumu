@@ -14,6 +14,7 @@ import os
 import asyncio
 from memory.api.faiss_memory_system_api import FAISSMemorySystem
 from memory.api.slot_process_api import SlotProcess
+from memory.memory_system.working_slot import WorkingSlot
 from memory.memory_system.utils import (
     setup_logger,
     _safe_dump_str,
@@ -121,10 +122,10 @@ class LiteLLMClient(BaseClient):
         assert "OPENAI_API_KEY" in os.environ, "OPENAI_API_KEY is not set"
         #assert "OPENROUTER_API_KEY" in os.environ, "OPENROUTER_API_KEY is not set"
 
-    def generate_response(self, prompt, model="openai/gpt-4o-mini", temperature=0.7, force_json=False):
+    def generate_response(self, prompt, model="openai/gpt-4o-mini", temperature=0.01, force_json=False):
         config = {
             "temperature": temperature,
-            "top_p": 1,
+            "top_p": 0.95,
             "provider": {
                 "sort": "throughput"
             },
@@ -277,26 +278,32 @@ class AyumuClient(BaseClient):
 
     def chat_with_memories(self, quert_text: str, message: str, model: str, temperature: float = 0.01, force_json: bool = False, user_id: str = "default_user") -> str:
         # Retrieve relevant memories
-        sem_query_limit = min(3, self.semantic_memory_system.size // 5)
-        epi_query_limit = min(3, self.episodic_memory_system.size // 5)
+        slot_query_limit = mib(3, self.slot_process.get_container_size() // 3)
+        sem_query_limit = min(3, self.semantic_memory_system.size // 3)
+        epi_query_limit = min(3, self.episodic_memory_system.size // 3)
         if len(quert_text) > 0:
-            relevant_semantic_memories = self.semantic_memory_system.query(query_text=quert_text, limit=sem_query_limit, threshold=0.2)
-            relevant_episodic_memories = self.episodic_memory_system.query(query_text=quert_text, limit=epi_query_limit, threshold=0.2)
+            relevant_slots = self.slot_process.query(quert_text=quert_text, limit=slot_query_limit)
+            relevant_semantic_memories = self.semantic_memory_system.query(query_text=quert_text, limit=sem_query_limit, threshold=0.5)
+            relevant_episodic_memories = self.episodic_memory_system.query(query_text=quert_text, limit=epi_query_limit, threshold=0.5)
         else:
+            relevant_slots = []
             relevant_semantic_memories = []
             relevant_episodic_memories = []
 
+        if len(relevant_slots) > 0:
+            logger.info(f"1st relevant_slots: {relevant_slots[0][1].summary}")
         if len(relevant_semantic_memories) > 0:
             logger.info(f"1st relevant_semantic_memories: {relevant_semantic_memories[0][1].summary}")
         if len(relevant_episodic_memories) > 0:
             logger.info(f"1st relevant_episodic_memories: {relevant_episodic_memories[0][1].detail}")
 
+        slots_str = "\n".join(f"- {_safe_dump_str(entry[1].summary)}" for entry in relevant_slots)
         semantic_memories_str = "\n".join(f"- {entry[1].summary}" for entry in relevant_semantic_memories)
         episodic_memories_str = "\n".join(f"- {_safe_dump_str(entry[1].detail)}" for entry in relevant_episodic_memories)
         self.semantic_memories.append(semantic_memories_str)
         self.episodic_memories.append(episodic_memories_str)
         # Generate Assistant response
-        system_prompt = f"You are a helpful AI. Answer the question based on query and memories.\nUser Semantic Memories:\n{semantic_memories_str}. \nUser Episodic Memories:\n{episodic_memories_str}"
+        system_prompt = f"You are a helpful AI. Answer the question based on query and memories.\nUser Short Memories:\n{slots_str} \nUser Semantic Memories:\n{semantic_memories_str}. \nUser Episodic Memories:\n{episodic_memories_str}"
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": message}]
 
         config = {
@@ -323,10 +330,9 @@ class AyumuClient(BaseClient):
     def generate_response(self, quert_text, prompt, model="openai/gpt-4o-mini", temperature=0.01, force_json=False):
         return self.chat_with_memories(quert_text=quert_text, message=prompt, model=model, temperature=temperature, force_json=force_json)
 
-    async def transfer_context_to_memories(self, context: str, is_abstract: bool = False):
+    async def transfer_context_to_slots(self, context: str):
         # Clear the slot_container
         print("[Info] Transferring working slots to memories...")
-        self.slot_process.clear_container()
 
         try:
             working_slots = await self.slot_process.transfer_qa_agent_context_to_working_slots(context=context)
@@ -343,9 +349,16 @@ class AyumuClient(BaseClient):
         
         for slot in working_slots:
             self.slot_process.add_slot(slot)
-        
+
+    async def transfer_slots_to_memories(self, is_abstract: bool = False):
+        if self.slot_process.get_container_size() == 0:
+            return
+
         routed_slot_container = await self.slot_process.filter_and_route_slots()
         inputs = await self.slot_process.generate_long_term_memory(routed_slots=routed_slot_container)
+
+        if not inputs or len(inputs) == 0:
+            return
 
         semantic_records = []
         episodic_records = []
@@ -365,6 +378,11 @@ class AyumuClient(BaseClient):
         print(f"[Info] Number of semantic memories: {self.semantic_memory_system.size}")
         print(f"[Info] Number of episodic memories: {self.episodic_memory_system.size}")
 
+
+    async def transfer_context_to_memories(self, context: str, is_abstract: bool = False):
+        await self.transfer_context_to_slots(context)
+        await self.transfer_slots_to_memories(is_abstract=is_abstract)
+
     async def abstract_episodic_records_to_semantic_record(self, epi_records: List[EpisodicRecord], consistency_threshold: float = 0.8):
         try:
             abstract_result, cidmap2semrec = await self.episodic_memory_system.abstract_episodic_records(epi_records, consistency_threshold)
@@ -375,15 +393,12 @@ class AyumuClient(BaseClient):
             print("[ERROR] abstract_episodic_records_to_semantic_record failed:", repr(e))
             traceback.print_exc()
 
-        
     @property
     def has_memory(self):
         return True
     
     def reset(self):
         self.slot_process = SlotProcess()
-        self.semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_name="gpt-4.1-mini")
-        self.episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_name="gpt-4.1-mini")
         #self.procedural_memory_system = FAISSMemorySystem(memory_type="procedural", llm_name="gpt-4.1-mini")
         self.semantic_memories = []
         self.episodic_memories = []

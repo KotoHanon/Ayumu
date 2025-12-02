@@ -3,6 +3,7 @@ import string
 import re
 import tiktoken
 import argparse
+from tqdm import tqdm
 
 
 def preprocess_text(text: str) -> str:
@@ -280,7 +281,10 @@ if __name__ == "__main__":
     all_peak_token_non_compressions = []
     all_dependency_non_compressions = []
 
-    for data in all_data:
+    for data in tqdm(all_data):
+        if "q" not in data or "Golden_answer" not in data:
+            continue
+            
         question = data["q"]
         solution_str = ""
 

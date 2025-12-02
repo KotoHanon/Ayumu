@@ -119,6 +119,7 @@ if __name__ == "__main__":
         print(f"Loaded {len(reconstruction_dicts)} reconstruction dicts from {file_path}")
     else:
         file_path = f'{args.task_type}_train_reconstruction_dicts_{args.model.replace("/", "_")}.jsonl'
+        #file_path = 'litellm_test.jsonl'
 
     # Read the test data
     if args.task_type == "rag" or args.task_type == "websearch":
@@ -163,8 +164,7 @@ if __name__ == "__main__":
     
     def process_row(func_args):
         index, row, client, model = func_args
-        if inference_type != "ayumu":
-            client.reset()
+        client.reset()
         try:
             # prompt = row['question']
             prompt = row["prompt"][0]["content"]
