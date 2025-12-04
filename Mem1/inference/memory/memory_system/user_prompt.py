@@ -21,27 +21,43 @@ STRICT OUTPUT: respond with a single lowercase word: `yes` or `no`. Do not expla
 WORKING_SLOT_QA_FILTER_USER_PROMPT = dedent("""
 You guard QA-Agent's long-term memory entrance. Decide if this WorkingSlot deserves promotion into FAISS storage.
 
-Assess three dimensions for whether to store a memory. Your goal is to keep any information that can help answer similar questions in the future, not only groundbreaking discoveries.
+Your goal is to keep **reusable, high-level memories** that can help answer future questions in the same domain (e.g., HotpotQA-style multi-hop QA), not just low-level logs.
 
-1. Question relevance – Does this information help answer the current question, explain a reasoning step, or connect two entities/events that the question cares about?
-   - Examples: "X is the capital of Y", "Person A is the parent of Person B", "Event C happened before Event D".
+Evaluate the slot along three dimensions:
 
-2. Reusable fact or pattern – Could a similar question in the future reuse this fact, relation, or short reasoning chain?
-   - This includes:
+1. Reusable knowledge or pattern – Does this slot contain a fact, relation, strategy, or failure pattern that could be helpful for similar questions in the future?
+   - Includes:
      - Entity attributes (dates, locations, roles, definitions).
-     - Relations between entities (A part_of B, A causes B, A located_in B).
-     - Short multi-hop links that serve as a bridge between pieces of evidence.
+     - Relations between entities (A part_of B, A located_in B, A spouse_of B, A causes B).
+     - Short multi-hop bridges that connect entities or events.
+     - Generalizable QA strategies or common failure modes.
 
-3. Reliability from context – Is this information explicitly stated or clearly implied by the given context, rather than purely guessed?
-   - Prefer facts supported by sentences in the context over speculative statements.
+2. Abstraction level – Is the content more than raw log text?
+   - Prefer:
+     - Summaries of reasoning steps, heuristics, or patterns.
+     - Condensed statements that compress multiple observations.
+   - Avoid:
+     - Pure boilerplate (“now I will think step by step”, “searching Wikipedia…”).
+     - Very low-level noise (token indices, random IDs, partial URLs) with no clear use.
+
+3. Reliability and stability – Is the information well-supported by the context and relatively stable over time?
+   - Prefer:
+     - Facts or patterns that are explicitly stated or clearly implied.
+   - Avoid:
+     - Pure guesses, opinions, or very ephemeral states.
 
 Decision rule:
-- Store as memory if it is clearly relevant to the question (dimension 1) AND it satisfies at least one of dimensions 2 or 3.
-- Do NOT store:
-  - Pure logging / formatting / boilerplate ("Now I will think step by step", "Searching Wikipedia...").
-  - Extremely local details that do not help answer questions (token-level noise, partial URLs, random IDs).
+- Default is slightly conservative, but you SHOULD store any slot that carries at least one **non-trivial, reusable** fact, relation, or strategy.
+- Return `yes` if:
+  - The slot contains **some reusable knowledge or pattern** (dimension 1), AND
+  - It is not dominated by pure logging/noise, AND
+  - It is at least moderately reliable (dimension 3) OR shows some abstraction (dimension 2).
+- Return `no` if the slot is:
+  - Mostly boilerplate/logging,
+  - Extremely local and unlikely to be reused,
+  - Or dominated by noise/IDs without a clear semantic core.
 
-Return `yes` only when at least two dimensions are clearly satisfied or the slot closes a critical loop (e.g., root-causing a failure, finishing a checklist item). Otherwise return `no`.
+When you are uncertain BUT the slot contains at least one meaningful, reusable fact or strategy, prefer answering `yes` rather than `no`.
 
 STRICT OUTPUT: respond with a single lowercase word: `yes` or `no`. Do not explain.
 
@@ -50,19 +66,18 @@ STRICT OUTPUT: respond with a single lowercase word: `yes` or `no`. Do not expla
 </slot-dump>
 """)
 
+
 WORKING_SLOT_ROUTE_USER_PROMPT = dedent("""
 Map this WorkingSlot to the correct ResearchAgent long-term memory family. Choose EXACTLY one label:
 
 - semantic: enduring insights, generalized conclusions, reusable heuristics.
 - episodic: Situation → Action → Result traces with metrics, timestamps, or narrative context.
-- procedural: MUST provide "when to use", and OPTIONAL reproducible steps, commands, pipelines, or interface contracts that express "how to".
 
 Tie-breaking rules:
 - Prefer episodic if a chronological action/result trail exists, even if insights appear.
-- Prefer procedural when explicit steps/tools/commands are primary.
 - Otherwise output semantic.
 
-Return only one of: "semantic", "episodic", "procedural".
+Return only one of: "semantic", "episodic".
 
 <slot-dump>
 {slot_dump}

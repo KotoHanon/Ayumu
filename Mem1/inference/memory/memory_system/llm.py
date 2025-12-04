@@ -23,7 +23,7 @@ class OpenAIClient:
         system_prompt: str,
         user_prompt: str,
         max_tokens: int = 1024,
-        temperature: float = 0.7,
+        temperature: float = 0.01,
         max_retries: int = 5,
         retry_delay: float = 1.0,
     ) -> str:

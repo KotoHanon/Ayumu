@@ -1,4 +1,5 @@
 import json
+import asyncio
 
 from typing import Dict, Iterable, List, Literal, Optional, Tuple, Union, Any
 from collections import deque
@@ -29,6 +30,7 @@ from memory.memory_system.models import (
     SemanticRecord,
     ProceduralRecord,
 )
+from tqdm import tqdm
 
 class SlotProcess:
     def __init__(self):
@@ -36,6 +38,7 @@ class SlotProcess:
         self.filtered_slot_container: List[WorkingSlot] = []
         self.routed_slot_container: List[Dict] = []
         self.llm_model = OpenAIClient()
+        self.memory_dict = []
 
     def add_slot(self, slot: WorkingSlot) -> None:
         self.slot_container[slot.to_dict().get('id')] = slot
@@ -61,7 +64,7 @@ class SlotProcess:
         self.filtered_slot_container = []
         self.routed_slot_container = []
 
-        for slot in self.slot_container.values():
+        for slot in tqdm(self.slot_container.values()):
             check_result = await slot.slot_filter(self.llm_model)
             print(check_result)
             if check_result == True:
@@ -79,6 +82,24 @@ class SlotProcess:
             print(f"Routing error: {e}")
         
         return self.routed_slot_container
+
+    def multi_thread_filter_and_route_slot(self, slot: WorkingSlot):
+        check_result = asyncio.run(slot.slot_filter(self.llm_model))
+        if check_result == True:
+            self.filtered_slot_container.append(slot)
+        else:
+            return
+
+        try:
+            for filtered_slot in self.filtered_slot_container:
+                route_result = asyncio.run(filtered_slot.slot_router(self.llm_model))
+                pair = {
+                    "memory_type": route_result,
+                    "slot": filtered_slot
+                }
+            self.routed_slot_container.append(pair)
+        except Exception as e:
+            print(f"Routing error: {e}")
     
     async def compress_slots(self, sids: List[str] = None) -> WorkingSlot:
         slot_json_blobs = []
@@ -239,7 +260,7 @@ class SlotProcess:
         allowed_types = {"semantic", "episodic", "procedural"}
         inputs: List[Dict[str, Any]] = []
 
-        for pair in routed_slots:
+        for pair in tqdm(routed_slots):
             memory_type = pair.get("memory_type")
             slot = pair.get("slot")
 
@@ -264,6 +285,28 @@ class SlotProcess:
                 inputs.append({"memory_type": memory_type, "input": input_dict})
 
         return inputs
+
+    def multi_thread_transfer_slot_to_memory(self, pair: Dict[str, WorkingSlot]) -> List[Dict[str, Any]]:
+        allowed_types = {"semantic", "episodic", "procedural"}
+        memory_type = pair.get("memory_type")
+        slot = pair.get("slot")
+
+        if memory_type not in allowed_types or not isinstance(slot, WorkingSlot):
+            return
+
+        try:
+            if memory_type == "semantic":
+                input_dict = asyncio.run(self.transfer_slot_to_semantic_record(slot))
+            elif memory_type == "episodic":
+                input_dict = asyncio.run(self.transfer_slot_to_episodic_record(slot))
+        except Exception as exc:
+            print(
+                f"[MEMORY] Failed to convert slot {getattr(slot, 'id', 'unknown')} "
+                f"({memory_type}): {exc}"
+            )
+            return
+
+        self.memory_dict.append({"memory_type": memory_type, "input": input_dict})
 
     async def transfer_slot_to_semantic_record(self, slot: WorkingSlot) -> Dict[str, Any]:
         system_prompt = (

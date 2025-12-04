@@ -10,7 +10,7 @@ from models import LiteLLMClient, AMemClient, VLLMOpenAIClient, AyumuClient
 import argparse
 import json
 import numpy as np
-from data_pipelines import Mem1Pipeline, model_estimated_match
+from data_pipelines import Mem1Pipeline, AyumuPipeline, model_estimated_match
 import sys
 try:
     sys.path.append("..")
@@ -22,7 +22,12 @@ import logging
 import hashlib
 from datetime import datetime
 import os
+import asyncio
 from memory.memory_system.utils import setup_logger
+from memory.api.faiss_memory_system_api import FAISSMemorySystem
+from memory.api.slot_process_api import SlotProcess
+from typing import List, Dict, Any
+from itertools import repeat
 
 # Set up logging
 log_filename = datetime.now().strftime("train_%Y%m%d_%H%M%S.log")
@@ -72,6 +77,11 @@ def json_serialize_helper(obj):
     if isinstance(obj, (set, tuple)):
         return list(obj)
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
 
 
 if __name__ == "__main__":
@@ -137,16 +147,6 @@ if __name__ == "__main__":
 
     if args.use_mem1:
         assert not args.use_amem, "Cannot use Agentic memory while mem1 style inference is on"
-
-    # Initialize the appropriate client
-    if args.use_ayumu:
-        llm_client = AyumuClient()
-    elif args.use_amem:
-        llm_client = AMemClient()
-    elif args.use_litellm:
-        llm_client = LiteLLMClient()
-    else:
-        llm_client = VLLMOpenAIClient()
 
 
     # Run the LLM loop for each row in the test data
@@ -246,18 +246,146 @@ if __name__ == "__main__":
                     json.dump(result_dict, f, indent=None, ensure_ascii=False, default=json_serialize_helper)
                     f.write('\n')
             return index
+
+    def process_row_for_ayumu(func_args):
+        index, row, client, model = func_args
+        client.reset()
+        try:
+            # prompt = row['question']
+            prompt = row["prompt"][0]["content"]
+            pipeline = AyumuPipeline(client, inference_type=inference_type, abstract_memories=args.abstract_memories)
+            answer, results_dict = pipeline.run_llm_loop(prompt, model=model)
+            logger.info(f"Generated answer: {answer}, Golden answer: {row['reward_model']['ground_truth']}")
+            #print(f"Generated answer: {answer}, Golden answer: {row['reward_model']['ground_truth']}")
+
+            if "multi" in args.data_file:
+                answers = str(answer).split(";")
+                ground_truths = row['reward_model']['ground_truth']['target']
+                exact_match = 0
+                for idx, gt in enumerate(ground_truths):
+
+                    gt = gt[0]
+                    try:
+                        if str(answers[idx]).lower().strip() in str(gt).lower().strip() or str(gt).lower().strip() in str(answers[idx]).lower().strip():
+                            exact_match += 1
+                        else:
+                            exact_match += 0
+                    except Exception as e:
+                        exact_match = 0
+                        break
+                if exact_match == len(ground_truths):
+                    print(f"Test {index} passed")
+                else:
+                    print(f"Test {index} failed")
+            else:
+                if str(answer).lower().strip() in str(row['reward_model']['ground_truth']).lower().strip():
+                    print(f"Test {index} passed")
+                    exact_match = True
+                else:
+                    print(f"Test {index} failed")
+                    exact_match = False
+            results_dict["index"] = index
+            results_dict["hash"] = row["hash"]
+            if "multi" in args.data_file:
+                results_dict['Golden_answer'] = row['reward_model']['ground_truth']['target']
+            else:
+                results_dict['Golden_answer'] = row['golden_answers']
+            results_dict['Exact_match'] = exact_match
+
+            if client.has_memory:
+                if inference_type in ["mem1", "amem"]:
+                    results_dict["memories"] = client.memories
+                elif inference_type == "ayumu":
+                    results_dict["semantic_memories"] = client.semantic_memories
+                    results_dict["episodic_memories"] = client.episodic_memories
+            
+            try:
+                if "multi" in args.data_file:
+                    results_dict['Model_estimated_match'] = model_estimated_match(answer, row['reward_model']['ground_truth']['target'], prompt, client)
+                else:
+                    results_dict['Model_estimated_match'] = model_estimated_match(answer, row['golden_answers'], prompt, client)
+            except Exception as e:
+                results_dict['Model_estimated_match'] = False
+            
+            # Thread-safe append to the results list
+            with results_lock:
+                # add the entry
+                with open(file_path, 'a', encoding='utf-8') as f:
+                    json.dump(results_dict, f, indent=None, ensure_ascii=False, default=json_serialize_helper)
+                    f.write('\n')
+            
+            return index
+        except Exception as e:
+            # Add minimal error information to results
+            result_dict = {
+                    'index': index,
+                    'hash': row["hash"],
+                    'error': str(e),
+                    'question': row.get('question', 'Unknown'),
+                    'Golden_answer': row.get('golden_answers', 'Unknown'),
+                    'Exact_match': False,
+                    'Model_estimated_match': False
+                }
+            with results_lock:
+                with open(file_path, 'a', encoding='utf-8') as f:
+                    json.dump(result_dict, f, indent=None, ensure_ascii=False, default=json_serialize_helper)
+                    f.write('\n')
+            return index
     
-    # Convert DataFrame to list of (index, row) tuples for parallel processing
-    row_data = [(index, row, llm_client, args.model) for index, row in train_data.iterrows()]
     
     # Use ThreadPoolExecutor to process rows in parallel
-    if args.use_amem or args.use_ayumu:
+    if args.use_amem:
         # we must run in a single thread
         # otherwise chromadb will clash
+        llm_client = AMemClient()
+        row_data = [(index, row, llm_client, args.model) for index, row in train_data.iterrows()]
         for row in tqdm(row_data):
             process_row(row)
+
+    elif args.use_ayumu:
+        max_workers = 3
+        llm_client = AyumuClient()
+        row_data = [(index, row, llm_client, args.model) for index, row in train_data.iterrows()]
+        for batch in chunks(row_data, max_workers):
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    list(tqdm(executor.map(process_row_for_ayumu, batch), total=len(batch)))
+                working_slots = llm_client.slot_process.slot_container.values()
+                num_slots = len(working_slots)
+                # filter and route
+                print(f"[Info] Filtering and routing {num_slots} slots")
+                with concurrent.futures.ThreadPoolExecutor(max_workers=num_slots) as executor:
+                    list(tqdm(executor.map(
+                        llm_client.slot_process.multi_thread_filter_and_route_slot,
+                        working_slots,
+                    ),
+                    total=num_slots
+                    ))
+                routed_slots = llm_client.slot_process.routed_slot_container
+                num_routed_slots = len(routed_slots)
+                print(f"[Info] Transferring memories from {num_routed_slots} slots to memory systems")
+                # generate memories in multi-threaded way
+                with concurrent.futures.ThreadPoolExecutor(max_workers=num_routed_slots) as executor:
+                    list(tqdm(executor.map(
+                        llm_client.slot_process.multi_thread_transfer_slot_to_memory,
+                        routed_slots,
+                    ),
+                    total=num_routed_slots
+                    ))
+                # transfer memories to records
+                llm_client.multi_thread_transfer_dicts_to_memories(is_abstract=args.abstract_memories)
+            except Exception as e:
+                print(f"Error processing batch: {e}")
+
+            print(f"[Info] Semantic memory size: {llm_client.semantic_memory_system.size}")
+            print(f"[Info] Episodic memory size: {llm_client.episodic_memory_system.size}")
+            
     else:
+        if args.use_mem1:
+            llm_client = VLLMOpenAIClient()
+        else:
+            llm_client = LiteLLMClient()
         # otherwise we can use parallel workers
+        row_data = [(index, row, llm_client, args.model) for index, row in train_data.iterrows()]
         with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
             list(tqdm(executor.map(process_row, row_data), total=len(row_data)))
-

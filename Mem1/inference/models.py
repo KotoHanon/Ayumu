@@ -2,7 +2,7 @@ import os
 import requests
 import logging
 import torch
-from typing import Dict, List, Union, Optional
+from typing import Dict, List, Union, Optional, Any
 from openai import OpenAI
 from dotenv import load_dotenv
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -24,6 +24,7 @@ from memory.memory_system.utils import (
 from memory.memory_system.models import EpisodicRecord, SemanticRecord
 from datetime import datetime
 import os
+from tqdm import tqdm
 
 log_filename = datetime.now().strftime("train_%Y%m%d_%H%M%S.log")
 logger = setup_logger("retrieve_memory", log_path=os.path.join("inference/log/retrieve_memory/", log_filename) ,level=logging.INFO)
@@ -276,15 +277,15 @@ class AyumuClient(BaseClient):
         self.episodic_memories = []
 
 
-    def chat_with_memories(self, quert_text: str, message: str, model: str, temperature: float = 0.01, force_json: bool = False, user_id: str = "default_user") -> str:
+    def chat_with_memories(self, query_text: str, message: str,  model: str, temperature: float = 0.01, force_json: bool = False, user_id: str = "default_user") -> str:
         # Retrieve relevant memories
-        slot_query_limit = mib(3, self.slot_process.get_container_size() // 3)
+        slot_query_limit = min(3, self.slot_process.get_container_size() // 3)
         sem_query_limit = min(3, self.semantic_memory_system.size // 3)
         epi_query_limit = min(3, self.episodic_memory_system.size // 3)
-        if len(quert_text) > 0:
-            relevant_slots = self.slot_process.query(quert_text=quert_text, limit=slot_query_limit)
-            relevant_semantic_memories = self.semantic_memory_system.query(query_text=quert_text, limit=sem_query_limit, threshold=0.5)
-            relevant_episodic_memories = self.episodic_memory_system.query(query_text=quert_text, limit=epi_query_limit, threshold=0.5)
+        if len(query_text) > 0:
+            relevant_slots = self.slot_process.query(query_text=query_text, limit=slot_query_limit)
+            relevant_semantic_memories = self.semantic_memory_system.query(query_text=query_text, limit=sem_query_limit, threshold=0.5)
+            relevant_episodic_memories = self.episodic_memory_system.query(query_text=query_text, limit=epi_query_limit, threshold=0.5)
         else:
             relevant_slots = []
             relevant_semantic_memories = []
@@ -327,16 +328,15 @@ class AyumuClient(BaseClient):
 
         return assistant_response
 
-    def generate_response(self, quert_text, prompt, model="openai/gpt-4o-mini", temperature=0.01, force_json=False):
-        return self.chat_with_memories(quert_text=quert_text, message=prompt, model=model, temperature=temperature, force_json=force_json)
+    def generate_response(self, query_text, prompt, model="openai/gpt-4o-mini", temperature=0.01, force_json=False):
+        return self.chat_with_memories(query_text=query_text, message=prompt, model=model, temperature=temperature, force_json=force_json)
 
     async def transfer_context_to_slots(self, context: str):
-        # Clear the slot_container
-        print("[Info] Transferring working slots to memories...")
+        print("[Info] Transferring context to working slots...")
 
         try:
             working_slots = await self.slot_process.transfer_qa_agent_context_to_working_slots(context=context)
-            print("after await, len of working_slots =", len(working_slots) if working_slots is not None else None)
+            print("after await, len of working_slots =", len(working_slots) if working_slots is not None else 0)
         except Exception as e:
             import traceback
             print("[ERROR] transfer_qa_agent_context_to_working_slots failed:", repr(e))
@@ -355,7 +355,12 @@ class AyumuClient(BaseClient):
             return
 
         routed_slot_container = await self.slot_process.filter_and_route_slots()
-        inputs = await self.slot_process.generate_long_term_memory(routed_slots=routed_slot_container)
+        try:
+            inputs = await self.slot_process.generate_long_term_memory(routed_slots=routed_slot_container)
+        except Exception as e:
+            import traceback
+            print("[ERROR] generate_long_term_memory failed:", repr(e))
+            traceback.print_exc()
 
         if not inputs or len(inputs) == 0:
             return
@@ -375,13 +380,40 @@ class AyumuClient(BaseClient):
         self.semantic_memory_system.add(semantic_records)
         self.episodic_memory_system.add(episodic_records)
 
-        print(f"[Info] Number of semantic memories: {self.semantic_memory_system.size}")
-        print(f"[Info] Number of episodic memories: {self.episodic_memory_system.size}")
+    async def multi_thread_transfer_dicts_to_memories(self, is_abstract):
+        for i in self.slot_process.memory_dict:
+            if i['memory_type'] == 'semantic':
+                semantic_records.append(self.semantic_memory_system.instantiate_sem_record(**i['input']))
+            elif i['memory_type'] == 'episodic':
+                episodic_records.append(self.semantic_memory_system.instantiate_epi_record(**i['input']))
+        
+        if is_abstract and len(episodic_records) > 0:
+            await self.abstract_episodic_records_to_semantic_record(episodic_records)
 
+        self.semantic_memory_system.add(semantic_records)
+        self.episodic_memory_system.add(episodic_records)
 
-    async def transfer_context_to_memories(self, context: str, is_abstract: bool = False):
-        await self.transfer_context_to_slots(context)
-        await self.transfer_slots_to_memories(is_abstract=is_abstract)
+    async def load_inputs_to_memory_records(self, inputs: List[Dict[str, Any]]):
+        if not inputs or len(inputs) == 0:
+            return
+
+        semantic_records = []
+        episodic_records = []
+
+        for i in tqdm(inputs):
+            if i['memory_type'] == 'semantic':
+                semantic_records.append(semantic_memory_system.instantiate_sem_record(**i['input']))
+            elif i['memory_type'] == 'episodic':
+                episodic_records.append(semantic_memory_system.instantiate_epi_record(**i['input']))
+        
+        if is_abstract and len(episodic_records) > 0:
+            await self.abstract_episodic_records_to_semantic_record(episodic_records)
+
+        semantic_memory_system.add(semantic_records)
+        episodic_memory_system.add(episodic_records)
+
+        print(f"[Info] Number of semantic memories: {semantic_memory_system.size}")
+        print(f"[Info] Number of episodic memories: {episodic_memory_system.size}")
 
     async def abstract_episodic_records_to_semantic_record(self, epi_records: List[EpisodicRecord], consistency_threshold: float = 0.8):
         try:
