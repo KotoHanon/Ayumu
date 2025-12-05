@@ -17,7 +17,6 @@ def setup_logger(name: str, log_path: str, level=logging.INFO) -> logging.Logger
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 文件 handler
     fh = logging.FileHandler(str(log_path), encoding="utf-8")
     fh.setLevel(logging.INFO)
     fh.setFormatter(logging.Formatter(
@@ -46,14 +45,35 @@ def compute_overlap_score(text: str, query: str, keywords: Optional[Iterable[str
     """Cheap lexical relevance score in [0, 1]."""
     if not text or not query:
         return 0.0
+    
+    STOPWORDS = {
+    "a", "an", "the", "of", "and", "or", "to", "in", "on", "for", "with",
+    "at", "by", "from", "is", "are", "was", "were", "be", "been", "being",
+    "this", "that", "these", "those", "it", "as", "into", "up", "down",
+    }
+
     text_lower = text.lower()
     query_lower = query.lower()
-    overlap = sum(1 for word in query_lower.split() if word in text_lower)
-    base_score = overlap / max(len(query_lower.split()), 1)
+
+    query_words = [w for w in query_lower.split() if w not in STOPWORDS]
+    if not query_words:
+        return 0.0 
+
+    overlap = sum(1 for word in query_words if word in text_lower)
+    base_score = overlap / len(query_words)
+
     if keywords:
-        hit_bonus = sum(0.1 for keyword in keywords if keyword.lower() in text_lower)
+        filtered_keywords = [
+            kw for kw in keywords
+            if kw and kw.lower() not in STOPWORDS
+        ]
+        hit_bonus = sum(
+            0.1 for keyword in filtered_keywords
+            if keyword.lower() in text_lower
+        )
     else:
         hit_bonus = 0.0
+
     return min(1.0, base_score + hit_bonus)
 
 

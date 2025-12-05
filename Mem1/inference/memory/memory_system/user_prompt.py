@@ -168,7 +168,7 @@ Authoring rules:
 2. `stage` MUST be one of: question_understanding, information_retrieval, answer_generation, answer_validation, meta.
    - Use `information_retrieval` / `answer_validation` often for semantic evidence.
    - Use `question_understanding` / `answer_generation` / `meta` often for episodic experience.
-3. `summary` follows Situation → Action → Result whenever data exists; keep ≤130 words and make it self-contained.
+3. `summary` follows Situation → Action → Result whenever data exists; keep ≤80 words and make it self-contained.
 4. `topic` is a 3–6 word slug referencing the problem space (lowercase, space-separated), e.g. "bridge entity retrieval", "evidence aggregation failure".
 5. `attachments` is optional but, when present, group similar info under keys such as:
     - "notes": {{"items": []}}        # short bullet-like notes or paraphrased facts

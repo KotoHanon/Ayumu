@@ -59,6 +59,17 @@ class SlotProcess:
         scored_slots.sort(key=lambda x: x[0], reverse=True)
         
         return scored_slots[:k]
+
+    def query_with_given_slots(self, query_text: str, slots: List[WorkingSlot], limit: int = 5, key_words: Optional[List[str]] = None) -> List[Tuple[float, WorkingSlot]]:
+        k = min(limit, len(slots))
+
+        scored_slots: List[Tuple[float, WorkingSlot]] = []
+        for slot in slots:
+            score = compute_overlap_score(query_text, slot.summary, key_words)
+            scored_slots.append((score, slot))
+        scored_slots.sort(key=lambda x: x[0], reverse=True)
+        
+        return scored_slots[:k]
         
     async def filter_and_route_slots(self) -> List[Dict[str, WorkingSlot]]:
         self.filtered_slot_container = []
@@ -86,20 +97,18 @@ class SlotProcess:
     def multi_thread_filter_and_route_slot(self, slot: WorkingSlot):
         check_result = asyncio.run(slot.slot_filter(self.llm_model))
         if check_result == True:
-            self.filtered_slot_container.append(slot)
+            try:
+                route_result = asyncio.run(slot.slot_router(self.llm_model))
+                pair = {
+                        "memory_type": route_result,
+                        "slot": slot
+                    }
+                self.routed_slot_container.append(pair)
+            except Exception as e:
+                print(f"Routing error: {e}")
         else:
             return
 
-        try:
-            for filtered_slot in self.filtered_slot_container:
-                route_result = asyncio.run(filtered_slot.slot_router(self.llm_model))
-                pair = {
-                    "memory_type": route_result,
-                    "slot": filtered_slot
-                }
-            self.routed_slot_container.append(pair)
-        except Exception as e:
-            print(f"Routing error: {e}")
     
     async def compress_slots(self, sids: List[str] = None) -> WorkingSlot:
         slot_json_blobs = []

@@ -115,8 +115,10 @@ class Mem1Pipeline(Pipeline):
     def run_llm_loop(self, prompt, model="openai/gpt-4o-mini"):
         use_mem1 = self.inference_type == "mem1"
         use_ayumu = self.inference_type == "ayumu"
-        is_compress_memory = self.inference_type in ["mem1", "amem"]
+        is_compress_memory = self.inference_type in ["mem1", "amem", "ayumu"]
         is_collect_slot = self.inference_type == "ayumu"
+
+        slots = []
 
         cur_response = ""
         query_text = ""
@@ -136,7 +138,7 @@ class Mem1Pipeline(Pipeline):
             if use_mem1:
                 cur_response = self.llm_client.make_completion(prompt, cur_obs, model=model, is_last_turn=iteration_cnt == MAX_ITERATION - 1)
             elif use_ayumu:
-                cur_response = self.llm_client.generate_response(query_text, cur_obs, model=model)
+                cur_response = self.llm_client.generate_response(query_text=query_text, slots=slots, prompt=cur_obs, model=model)
             else:
                 cur_response = self.llm_client.generate_response(cur_obs, model=model)
 
@@ -160,7 +162,7 @@ class Mem1Pipeline(Pipeline):
                         cur_turn_result = cur_response + search_results
                         if search_query not in self.search_query_cache:
                             self.search_query_cache.add(search_query)
-                            asyncio.run(self.llm_client.transfer_context_to_slots(context=memory))
+                            slots.extend(asyncio.run(self.llm_client.transfer_context_to_slots(context=memory)))
             
             if internal_state:
                 # Store summary in results dictionary
@@ -213,16 +215,17 @@ class Mem1Pipeline(Pipeline):
         return None, results_dict
 
 class AyumuPipeline(Pipeline):
-    def __init__(self, llm_client, inference_type: Literal["normal", "amem", "mem1", "ayumu"], abstract_memories: bool = False):
+    def __init__(self, llm_client, inference_type: Literal["normal", "amem", "mem1", "ayumu"], slots, abstract_memories: bool = False):
         super().__init__(llm_client)
         self.inference_type = inference_type
         self.abstract_memories = abstract_memories
         self.search_query_cache = set()
+        self.slots = slots
 
     def run_llm_loop(self, prompt, model):
         use_mem1 = self.inference_type == "mem1"
         use_ayumu = self.inference_type == "ayumu"
-        is_compress_memory = self.inference_type in ["mem1", "amem"]
+        is_compress_memory = self.inference_type in ["mem1", "amem", "ayumu"]
         is_collect_slot = self.inference_type == "ayumu"
 
         cur_response = ""
@@ -239,7 +242,7 @@ class AyumuPipeline(Pipeline):
         results_dict = {"q": prompt}
 
         while iteration_cnt < MAX_ITERATION:
-            cur_response = self.llm_client.generate_response(query_text, cur_obs, model=model)
+            cur_response = self.llm_client.generate_response(query_text=query_text, slots=self.slots, prompt=cur_obs, model=model)
 
             # for the current implementation, use <think></think> for storing the internal state
             internal_state = extract_internal_state(cur_response, tag="think")
@@ -261,7 +264,7 @@ class AyumuPipeline(Pipeline):
                         cur_turn_result = cur_response + search_results
                         if search_query not in self.search_query_cache:
                             self.search_query_cache.add(search_query)
-                            asyncio.run(self.llm_client.transfer_context_to_slots(context=memory))
+                            self.slots.extend(asyncio.run(self.llm_client.transfer_context_to_slots(context=memory)))
             
             if internal_state:
                 # Store summary in results dictionary
@@ -271,7 +274,7 @@ class AyumuPipeline(Pipeline):
             
             if is_compress_memory:
                 # clear all previous states by setting the cur_obs to empty
-                cur_obs = ""
+                cur_obs = prompt
             
 
             num_turns_left = MAX_ITERATION - iteration_cnt - 1

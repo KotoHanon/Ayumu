@@ -131,7 +131,6 @@ if __name__ == "__main__":
         print(f"Loaded {len(reconstruction_dicts)} reconstruction dicts from {file_path}")
     else:
         file_path = f'{args.task_type}_train_reconstruction_dicts_{args.model.replace("/", "_")}.jsonl'
-        #file_path = 'litellm_test.jsonl'
 
     # Read the test data
     if args.task_type == "rag" or args.task_type == "websearch":
@@ -168,12 +167,10 @@ if __name__ == "__main__":
         index, row, client, model = func_args
         client.reset()
         try:
-            # prompt = row['question']
             prompt = row["prompt"][0]["content"]
             pipeline = Mem1Pipeline(client, inference_type=inference_type, abstract_memories=args.abstract_memories)
             answer, results_dict = pipeline.run_llm_loop(prompt, model=model)
             logger.info(f"Generated answer: {answer}, Golden answer: {row['reward_model']['ground_truth']}")
-            #print(f"Generated answer: {answer}, Golden answer: {row['reward_model']['ground_truth']}")
 
             if "multi" in args.data_file:
                 answers = str(answer).split(";")
@@ -253,12 +250,11 @@ if __name__ == "__main__":
         index, row, client, model = func_args
         client.reset()
         try:
-            # prompt = row['question']
             prompt = row["prompt"][0]["content"]
-            pipeline = AyumuPipeline(client, inference_type=inference_type, abstract_memories=args.abstract_memories)
+            slots = []
+            pipeline = AyumuPipeline(client, inference_type=inference_type, slots=slots, abstract_memories=args.abstract_memories)
             answer, results_dict = pipeline.run_llm_loop(prompt, model=model)
             logger.info(f"Generated answer: {answer}, Golden answer: {row['reward_model']['ground_truth']}")
-            #print(f"Generated answer: {answer}, Golden answer: {row['reward_model']['ground_truth']}")
 
             if "multi" in args.data_file:
                 answers = str(answer).split(";")
@@ -293,13 +289,6 @@ if __name__ == "__main__":
             else:
                 results_dict['Golden_answer'] = row['golden_answers']
             results_dict['Exact_match'] = exact_match
-
-            if client.has_memory:
-                if inference_type in ["mem1", "amem"]:
-                    results_dict["memories"] = client.memories
-                elif inference_type == "ayumu":
-                    results_dict["semantic_memories"] = client.semantic_memories
-                    results_dict["episodic_memories"] = client.episodic_memories
             
             try:
                 if "multi" in args.data_file:
@@ -318,8 +307,7 @@ if __name__ == "__main__":
             
             return index
         except Exception as e:
-            # Add minimal error information to results
-            result_dict = {
+            results_dict = {
                     'index': index,
                     'hash': row["hash"],
                     'error': str(e),
@@ -330,7 +318,7 @@ if __name__ == "__main__":
                 }
             with results_lock:
                 with open(file_path, 'a', encoding='utf-8') as f:
-                    json.dump(result_dict, f, indent=None, ensure_ascii=False, default=json_serialize_helper)
+                    json.dump(results_dict, f, indent=None, ensure_ascii=False, default=json_serialize_helper)
                     f.write('\n')
             return index
     
