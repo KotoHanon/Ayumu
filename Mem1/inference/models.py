@@ -26,6 +26,7 @@ from mem0 import Memory
 from datetime import datetime
 import os
 from tqdm import tqdm
+from uuid import uuid4
 import random
 
 log_filename = datetime.now().strftime("train_%Y%m%d_%H%M%S.log")
@@ -272,7 +273,7 @@ class Mem0Client(BaseClient):
         kuzu_root = "/tmp/kuzu_graphs"
         os.makedirs(faiss_root, exist_ok=True)
         os.makedirs(kuzu_root, exist_ok=True)
-        store_time = f"store_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        store_time = f"store_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
         # Initialize the memory system 🚀
         self.config = {
                 "llm": {
@@ -363,7 +364,7 @@ class Mem0Client(BaseClient):
         return True
 
     def reset(self):
-        store_time = f"store_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        store_time = f"store_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
         self.config["vector_store"]["config"]["path"] = os.path.join("/tmp/faiss_memories", store_time)
         self.config["graph_store"]["config"]["db"] = os.path.join("/tmp/kuzu_graphs", store_time)
         self.memory_system = Memory.from_config(self.config)
