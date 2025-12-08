@@ -267,13 +267,14 @@ class Mem0Client(BaseClient):
         assert "OPENAI_API_KEY" in os.environ, "OPENAI_API_KEY is not set"
         #assert "OPENROUTER_API_KEY" in os.environ, "OPENROUTER_API_KEY is not set"
         litellm.drop_params = True
+        faiss_root = "/tmp/faiss_memories"
+        kuzu_root = "/tmp/kuzu_graphs"
+        os.makedirs(faiss_root, exist_ok=True)
+        os.makedirs(kuzu_root, exist_ok=True)
+        store_time = datetime.now().strftime("store_%Y%m%d_%H%M%S")
         # Initialize the memory system 🚀
         from mem0 import Memory
-        if use_graph:
-            # TODO
-            self.config = {}
-        else:
-            self.config = {
+        self.config = {
                 "llm": {
                     "provider": "openai",
                     "config": {
@@ -286,7 +287,7 @@ class Mem0Client(BaseClient):
                     "provider": "faiss",
                     "config": {
                         "collection_name": "test",
-                        "path": "/tmp/faiss_memories",
+                        "path": os.path.join(faiss_root, store_time),
                         "distance_strategy": "euclidean"
                     }
                 },
@@ -301,6 +302,16 @@ class Mem0Client(BaseClient):
                     "summarization": True,
                 },
             }
+        if use_graph:
+            # Add graph store configuration
+            graph_store = {
+                "provider": "kuzu",
+                "config": {
+                    "db": os.path.join(kuzu_root, store_time),
+                },
+            }
+            self.config.update({"graph_store": graph_store})
+
         self.memory_system = Memory.from_config(self.config)
         self.memories = []
 
