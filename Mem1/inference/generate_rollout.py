@@ -99,6 +99,8 @@ if __name__ == "__main__":
                         help="Use mem1 inference style")
     parser.add_argument("--use_litellm", action="store_true", default=False,
                         help="Use LiteLLM client")
+    parser.add_argument("--use_local_model", action="store_true", default=False,
+                        help="Use VLLM OpenAI client")
     parser.add_argument("--use_graph", action="store_true", default=False,
                         help="Use graph memory in Mem0Client")
     parser.add_argument("--abstract_memories", action="store_true", default=False,
@@ -334,20 +336,13 @@ if __name__ == "__main__":
     if args.use_amem:
         # we must run in a single thread
         # otherwise chromadb will clash
-        llm_client = AMemClient()
+        llm_client = AMemClient(args.use_local_model)
         row_data = [(index, row, llm_client, args.model) for index, row in train_data.iterrows()]
         for row in tqdm(row_data):
             process_row(row)
 
-        '''elif args.use_mem0 and args.use_graph:
-            # we must run in a single thread for Memo-Graph
-            llm_client = Mem0Client(use_graph=args.use_graph)
-            row_data = [(index, row, llm_client, args.model) for index, row in train_data.iterrows()]
-            for row in tqdm(row_data):
-                process_row(row)'''
-
     elif args.use_ayumu:
-        llm_client = AyumuClient()
+        llm_client = AyumuClient(args.use_local_model)
         row_data = [(index, row, llm_client, args.model) for index, row in train_data.iterrows()]
         for batch in chunks(row_data, max_workers):
             try:
@@ -387,7 +382,7 @@ if __name__ == "__main__":
         if args.use_mem1:
             llm_client = VLLMOpenAIClient()
         elif args.use_mem0:
-            llm_client = Mem0Client(use_graph=args.use_graph)
+            llm_client = Mem0Client(args.use_local_model, use_graph=args.use_graph)
         else:
             llm_client = LiteLLMClient()
         # otherwise we can use parallel workers
