@@ -58,6 +58,9 @@ class SlotProcess:
         k = min(limit, len(slots))
         scored_slots: List[Tuple[float, WorkingSlot]] = []
 
+        if len(slots) <= 3:
+            use_svd = False
+
         if use_svd == False:
             # Normal Retrieval
             for slot in slots:

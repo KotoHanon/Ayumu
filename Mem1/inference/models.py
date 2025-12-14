@@ -550,7 +550,6 @@ class AyumuClient(BaseClient):
         sem_query_limit = min(3, self.semantic_memory_system.size // 3)
         epi_query_limit = min(3, self.episodic_memory_system.size // 3)
         if len(query_text) > 0:
-            #relevant_slots = self.slot_process.query(query_text=message, slots=slots, limit=slot_query_limit, key_words=query_text.split())
             relevant_slots = self.slot_process.query(query_text=message, slots=slots, limit=slot_query_limit, key_words=query_text.split(), use_svd=False, embed_func=self.semantic_memory_system.vector_store._embed)
             relevant_semantic_memories = self.semantic_memory_system.query(query_text=query_text, limit=sem_query_limit, threshold=threshold)
             relevant_episodic_memories = self.episodic_memory_system.query(query_text=query_text, limit=epi_query_limit)

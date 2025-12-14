@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from uuid import uuid4
-from typing import Iterable, Optional, Tuple, Any, Dict
+from typing import Iterable, Optional, Tuple, Any, Dict, List
 from pathlib import Path
 
 import logging
@@ -205,3 +205,18 @@ def _truncate_text(text: Optional[str], limit: int = 1500) -> Optional[str]:
     if len(text) <= limit:
         return text
     return text[: limit - 12] + "... <truncated>"
+
+def _push_event(event_buffer: List[str], tag: str, text: str, max_chars: int = 1500):
+    text = (text or "").strip()
+    if not text:
+        return
+    if len(text) > max_chars:
+        text = text[:max_chars] + "...(truncated)"
+    event_buffer.append(f"[{tag}]\n{text}")
+
+def _drain_snapshot(event_buffer: List[str], max_chars: int = 4000) -> str:
+    snapshot = "\n\n".join(event_buffer)
+    if len(snapshot) > max_chars:
+        snapshot = snapshot[-max_chars:] # keep the last max_chars
+    event_buffer.clear()
+    return snapshot
