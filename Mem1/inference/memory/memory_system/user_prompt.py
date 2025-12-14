@@ -201,6 +201,83 @@ Output STRICTLY as JSON within the tags below (no extra commentary):
 </working-slots>
 """)
 
+TRANSFER_FC_AGENT_CONTEXT_TO_WORKING_SLOT_PROMPT = dedent("""
+Convert the BFCL tool-using agent trajectory into at most {max_slots} WorkingSlot entries ready for filtering/routing.
+
+BFCL characteristics to account for:
+- Multiple candidate tools may be present; only some are relevant.
+- Required parameters may be missing; the safe behavior is to ask for clarification (not guess).
+- Multi-turn: tool outputs in earlier turns often constrain later arguments.
+- Some system messages explicitly forbid assumptions; preserve such constraints as evidence.
+- Tool descriptions / schemas can be noisy; store disambiguation rules as procedural experience.
+
+Goal:
+- Only create slots worth long-term reuse for future tool-calling tasks (not tied to a single test case).
+- A slot SHOULD be created if and only if it is one of:
+  (A) Semantic evidence: stable facts/constraints from user messages, system constraints, tool schemas, or tool outputs.
+  (B) Episodic experience: reusable strategy, reasoning pattern, failure mode, or recovery tactic observed in this trajectory.
+  (C) Procedural experience: actionable “how-to” steps for tool selection, argument filling, validation, execution, and post-processing.
+
+Never store:
+- Any gold labels or evaluator-only signals (if present).
+- Raw chain-of-thought or verbose inner reasoning; keep summaries outcome-focused.
+- Overly specific private strings that are not reusable (e.g., full addresses/IDs) unless they illustrate a general rule. Prefer anonymized patterns.
+
+Context Snapshot (may include dialogue history, tool schemas, tool outputs):
+<bfcl-context>
+{snapshot}
+</bfcl-context>
+
+Authoring rules:
+1. Each slot MUST capture exactly ONE reusable takeaway.
+2. Each slot MUST declare `memory_type` in {{"semantic","episodic","procedural"}}.
+3. `stage` MUST be one of:
+   - intent_constraints         # user intent + hard constraints (no sugar, metric units, etc.)
+   - tool_selection             # selecting the right tool among distractors
+   - argument_construction      # mapping text -> required args, filling enums, defaults policy
+   - tool_execution             # calling tools, handling returned outputs
+   - result_integration         # merging tool outputs into next-turn state/answer
+   - error_handling             # retries, validation failures, unsupported protocol, etc.
+   - meta                       # general insights, evaluation protocol concerns
+4. `summary` MUST be ≤90 words, self-contained, and follow Situation → Action → Result when possible.
+5. `topic` is a 3–7 word slug (lowercase, space-separated), e.g. "no-assumption parameter filling", "tool distractor disambiguation".
+6. `attachments` is optional but, when present, use these keys when relevant:
+   - "constraints": {{"items": []}}     # explicit do/don't rules (e.g., "ask for clarification")
+   - "tool_schema": {{"items": []}}     # compact schema notes: required fields, enums, defaults policy
+   - "arg_map": {{"items": []}}         # text-to-arg mapping patterns (e.g., "NO SUGAR -> sweetness_level=none")
+   - "observations": {{"items": []}}    # key tool outputs / environment facts (paraphrased)
+   - "failures": {{"items": []}}        # error symptoms and likely causes
+   - "recovery": {{"steps": []}}        # concrete recovery steps (procedural)
+   - "checks": {{"items": []}}          # validation checks before calling tools
+7. `tags` is a list of lowercase keywords (≤6) mixing:
+   - domain: "bfcl","function-calling","multi-turn","tool-use"
+   - memory type: "semantic-evidence","episodic-experience","procedural-experience"
+   - skill: "tool-selection","arg-filling","clarification","validation","error-recovery","distractor-tools"
+
+Routing hints (implicit, do not add extra fields beyond schema):
+- semantic: store stable constraints, schemas, outputs, invariant mappings.
+- episodic: store strategies and failures that generalize across tools/tasks.
+- procedural: store step-by-step playbooks (pre-checks, arg filling, calling, interpreting, retrying).
+
+Output STRICTLY as JSON within the tags below (no extra commentary):
+<working-slots>
+{{
+  "slots": [
+    {{
+      "stage": "argument_construction",
+      "topic": "no-assumption required-args protocol",
+      "summary": "Situation: Tool schema had required fields not present in the user request. Action: Ask a targeted clarification question listing missing required args rather than guessing. Result: Prevented invalid tool calls and aligned with system instruction forbidding assumptions.",
+      "attachments": {{
+        "constraints": {{"items": ["do not guess missing required args; ask clarification"]}},
+        "checks": {{"items": ["verify all required fields present", "verify enum values allowed"]}}
+      }},
+      "tags": ["bfcl","function-calling","procedural-experience","arg-filling","clarification","validation"]
+    }}
+  ]
+}}
+</working-slots>
+""")
+
 
 TRANSFER_EXPERIMENT_AGENT_CONTEXT_TO_WORKING_SLOTS_PROMPT = dedent("""
 Convert the Experiment Agent workflow context into at most {max_slots} WorkingSlot entries ready for filtering/routing.

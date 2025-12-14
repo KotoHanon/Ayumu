@@ -546,12 +546,12 @@ class AyumuClient(BaseClient):
 
     def chat_with_memories(self, query_text: str, slots: List[WorkingSlot], message: str, model: str, temperature: float = 0.01, force_json: bool = False, user_id: str = "default_user", threshold: float = 0.4) -> str:
         # Retrieve relevant memories
-        slot_query_limit = min(8, self.slot_process.get_container_size())
+        slot_query_limit = min(5, self.slot_process.get_container_size())
         sem_query_limit = min(3, self.semantic_memory_system.size // 3)
         epi_query_limit = min(3, self.episodic_memory_system.size // 3)
         if len(query_text) > 0:
             #relevant_slots = self.slot_process.query(query_text=message, slots=slots, limit=slot_query_limit, key_words=query_text.split())
-            relevant_slots = self.slot_process.query(query_text=message, slots=slots, limit=slot_query_limit, key_words=query_text.split(), use_svd=True, embed_func=self.semantic_memory_system.vector_store._embed)
+            relevant_slots = self.slot_process.query(query_text=message, slots=slots, limit=slot_query_limit, key_words=query_text.split(), use_svd=False, embed_func=self.semantic_memory_system.vector_store._embed)
             relevant_semantic_memories = self.semantic_memory_system.query(query_text=query_text, limit=sem_query_limit, threshold=threshold)
             relevant_episodic_memories = self.episodic_memory_system.query(query_text=query_text, limit=epi_query_limit)
             
@@ -679,7 +679,7 @@ class AyumuClient(BaseClient):
             if i['memory_type'] == 'semantic':
                 semantic_records.append(self.semantic_memory_system.instantiate_sem_record(**i['input']))
             elif i['memory_type'] == 'episodic':
-                episodic_records.append(self.semantic_memory_system.instantiate_epi_record(**i['input']))
+                episodic_records.append(self.episodic_memory_system.instantiate_epi_record(**i['input']))
         
         if is_abstract and len(episodic_records) > 0:
             await self.abstract_episodic_records_to_semantic_record(episodic_records)
