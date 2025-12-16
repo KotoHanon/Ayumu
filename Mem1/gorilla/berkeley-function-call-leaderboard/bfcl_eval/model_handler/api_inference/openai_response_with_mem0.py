@@ -4,6 +4,9 @@ import os
 import time
 import asyncio
 import logging
+import sys
+from pathlib import Path
+from uuid import uuid4
 
 from bfcl_eval.constants.type_mappings import GORILLA_TO_OPENAPI
 from bfcl_eval.model_handler.base_handler import BaseHandler
@@ -21,11 +24,6 @@ from openai import OpenAI, RateLimitError
 from openai.types.responses import Response
 from typing import List, Any, Optional
 from datetime import datetime
-
-from memory.api.faiss_memory_system_api import FAISSMemorySystem
-from memory.api.slot_process_api import SlotProcess
-from memory.memory_system.models import EpisodicRecord, SemanticRecord, ProceduralRecord
-from memory.memory_system.working_slot import WorkingSlot
 from memory.memory_system.utils import (
     _push_event,
     _drain_snapshot,
@@ -33,11 +31,19 @@ from memory.memory_system.utils import (
     _multi_thread_run,
     setup_logger,
 )
+from mem0 import Memory
+
+from inference.amem.memory_system import AgenticMemorySystem
+
+PROJECT_ROOT = Path(__file__).resolve().parents[6]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 log_filename = datetime.now().strftime("eval_%Y%m%d_%H%M%S.log")
+faiss_root = "/tmp/faiss_memories"
+os.makedirs(faiss_root, exist_ok=True)
+store_time = f"store_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
 
-
-class OpenAIResponsesHandlerWithMemory(BaseHandler):
+class OpenAIResponsesHandlerWithMem0(BaseHandler):
     MEM_TAG = "PRIVATE_MEMORY:"
 
     def __init__(self, model_name, temperature, registry_name, is_fc_model, **kwargs) -> None:
@@ -46,17 +52,40 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
         self.model_name = model_name
         self.client = OpenAI(**self._build_client_kwargs())
 
-        self.slot_process = SlotProcess(llm_name=model_name, llm_backend="openai")
-        self._event_buffer: List[str] = []
-        self.slots = []
-        self.semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_name=model_name, llm_backend="openai")
-        self.episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_name=model_name, llm_backend="openai")
-        self.procedural_memory_system = FAISSMemorySystem(memory_type="procedural", llm_name=model_name, llm_backend="openai")
+        self.config = {
+            "llm": {
+                "provider": "openai",
+                "config": {
+                    "model": "gpt-4o-mini",
+                    "temperature": 0.01,
+                    "max_tokens": 2000,
+                }
+            },
+            "vector_store": {
+                "provider": "faiss",
+                "config": {
+                    "collection_name": "test",
+                    "path": os.path.join(faiss_root, store_time),
+                    "distance_strategy": "euclidean"
+                }
+            },
+            "embedder": {
+                "provider": "openai",
+                "config": {
+                    "model": "text-embedding-3-small"
+                }
+            },
+            "memory": {
+                "auto_embed": True,
+                "summarization": True,
+            },
+        }
+        self.memory_system = Memory.from_config(self.config)
         self._cur_test_id = None
+        self._event_buffer: List[str] = []
 
-        self.logger_context = setup_logger("context", log_path=os.path.join("log/ayumu/context/", log_filename) ,level=logging.INFO)
-        self.logger_memory = setup_logger("memory", log_path=os.path.join("log/ayumu/memory/", log_filename) ,level=logging.INFO)
-
+        self.logger_context = setup_logger("context", log_path=os.path.join("log/mem0/context/", log_filename) ,level=logging.INFO)
+        self.logger_memory = setup_logger("memory", log_path=os.path.join("log/mem0/memory/", log_filename) ,level=logging.INFO)
 
     def _build_client_kwargs(self):
         kwargs = {}
@@ -75,20 +104,6 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
                 prompt["role"] = "developer"
         return prompts
 
-    def _reset_if_new_case(self, test_id: str):
-        if test_id != self._cur_test_id:
-            # push the lateset turn context to slots
-            self._cur_test_id = test_id
-            print(f"[Info] Size of slots before reset: {len(self.slots)}")
-            if len(self.slots) == 0:
-                return
-            # Transfer existing slots to long-term memory for every test entry
-            '''asyncio.run(self.transfer_slots_to_memories(self.slots, is_abstract=True))'''
-            # Multi-threaded version
-            self.multi_thread_transfer_slots_to_memories()
-            self.slot_process = SlotProcess(llm_name=self.model_name, llm_backend="openai") # Reset
-            self.slots = [] # Reset
-
     def _strip_old_memory_block_keep_fc_items(self, message: list) -> list:
         out = []
         for m in message:
@@ -99,34 +114,20 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
         return out
 
     def _inject_memory(self, query_text: str, message: list[dict], threshold: float = 0.4):
+        # Retrieve relevant memories
+        try:
+            returns = self.memory_system.search(message, user_id=f"agent", limit=3)
+            print("Raw returns from memory search:", returns)
+            if isinstance(returns, list):
+                relevant_memories = returns
+            else:
+                relevant_memories = returns['results']
+        except Exception as e:
+            print("[Error] Memory search failed:", repr(e))
+            relevant_memories = []
+        memories_str = "\n".join(f"- {entry['memory']}" for entry in relevant_memories)
 
-        slot_query_limit = 3
-        sem_query_limit = min(3, self.semantic_memory_system.size // 3)
-        epi_query_limit = min(3, self.episodic_memory_system.size // 3)
-        proc_query_limit = min(3, self.procedural_memory_system.size // 3)
-
-        if len(query_text) > 0:
-            relevant_slots = self.slot_process.query(query_text=query_text, slots=self.slots, limit=slot_query_limit, key_words=message.split(), use_svd=True, embed_func=self.semantic_memory_system.vector_store._embed)
-            relevant_semantic_memories = self.semantic_memory_system.query(query_text=query_text, limit=sem_query_limit, threshold=threshold)
-            relevant_episodic_memories = self.episodic_memory_system.query(query_text=query_text, limit=epi_query_limit)
-            relevant_procedural_memories = self.procedural_memory_system.query(query_text=query_text, limit=proc_query_limit)
-            
-        else:
-            relevant_slots = []
-            relevant_semantic_memories = []
-            relevant_episodic_memories = []
-            relevant_procedural_memories = []
-        
-        if len(relevant_slots) > 0:
-            print(f"[Info] Size of Retrieved Slots: {len(relevant_slots)}")
-            print(f"[Info] 1st Retrieved Slot: {_safe_dump_str(relevant_slots[0])}")
-
-        slots_str = "\n".join(f"- {_safe_dump_str(entry[1].summary)}" for entry in relevant_slots)
-        semantic_memories_str = "\n".join(f"- {entry[1].summary}" for entry in relevant_semantic_memories)
-        episodic_memories_str = "\n".join(f"- {_safe_dump_str(entry[1])}" for entry in relevant_episodic_memories)
-        procedural_memories_str = "\n".join(f"- {_safe_dump_str(entry[1])}" for entry in relevant_procedural_memories)
-
-        self.logger_memory.info(f"Retrieved Slots:\n{slots_str} \nRetrieved Semantic Memories:\n{semantic_memories_str}\nRetrieved Episodic Memories:\n{episodic_memories_str}\nRetrieved Procedural Memories:\n{procedural_memories_str}")
+        self.logger_memory.info(f"[Info] Retrieved Memories for Query '{query_text}': {memories_str}")
 
         mem_msg = {
             "role": "user",
@@ -134,18 +135,11 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
                 f"{self.MEM_TAG}\n"
                 "Context note (optional): the following are retrieved memories. "
                 "They may be irrelevant. Prioritize the current user request.\n\n"
-                "Here are some relevant working slots:\n"
-                f"{slots_str}\n"
-                "Here are some relevant semantic memories:\n"
-                f"{semantic_memories_str}\n"
-                "Here are some relevant episodic memories:\n"
-                f"{episodic_memories_str}\n"
-                "Here are some relevant procedural memories:\n"
-                f"{procedural_memories_str}\n"
+                "Here are some relevant memories:\n"
+                f"{memories_str}\n"
             ),
         }
 
-        #inject BEFORE last user message (FC-safe; user remains most recent)
         last_user_idx = None
         for i in range(len(message) - 1, -1, -1):
             if isinstance(message[i], dict) and message[i].get("role") == "user":
@@ -201,8 +195,6 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
 
 
     def _pre_query_processing_FC(self, inference_data: dict, test_entry: dict) -> dict:
-        self._reset_if_new_case(test_entry["id"])
-
         for round_idx in range(len(test_entry["question"])):
             test_entry["question"][round_idx] = self._substitute_prompt_role(test_entry["question"][round_idx])
 
@@ -300,8 +292,6 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
         return self.generate_with_backoff(**kwargs)
 
     def _pre_query_processing_prompting(self, test_entry: dict) -> dict:
-        self._reset_if_new_case(test_entry["id"])
-
         functions: list = test_entry["function"]
         test_entry_id: str = test_entry["id"]
 
@@ -508,119 +498,8 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
     def _materialize_turn_slots(self, max_slots: int = 8):
         # transfer the latest turn snapshot to working slots
         snapshot_events = _drain_snapshot(event_buffer=self._event_buffer)
+        self.logger_context.info(f"[Info] Materializing context: {snapshot_events}")
         if not snapshot_events:
             return
 
-        new_slots = asyncio.run(
-            self.slot_process.transfer_fc_agent_context_to_working_slots(
-                context=snapshot_events,
-                max_slots=max_slots,
-            )
-        )
-        print(f"[Info] Materialized {len(new_slots)} new slots from turn snapshot.")
-        for slot in new_slots:
-            self.logger_context.info(f"New Slot\n: {_safe_dump_str(slot)}")
-            self.slot_process.add_slot(slot)
-        self.slots.extend(new_slots)
-
-    async def transfer_slots_to_memories(self, slots: List[WorkingSlot], is_abstract: bool = False):
-        if len(slots) == 0:
-            return
-
-        routed_slot_container = await self.slot_process.filter_and_route_slots(slots=slots, task="fc")
-        try:
-            inputs = await self.slot_process.generate_long_term_memory(routed_slots=routed_slot_container)
-        except Exception as e:
-            import traceback
-            print("[ERROR] generate_long_term_memory failed:", repr(e))
-            traceback.print_exc()
-
-        if not inputs or len(inputs) == 0:
-            return
-
-        semantic_records = []
-        episodic_records = []
-        procedural_records = []
-
-        for i in inputs:
-            if i['memory_type'] == 'semantic':
-                semantic_records.append(self.semantic_memory_system.instantiate_sem_record(**i['input']))
-            elif i['memory_type'] == 'episodic':
-                episodic_records.append(self.episodic_memory_system.instantiate_epi_record(**i['input']))
-            elif i['memory_type'] == 'procedural':
-                procedural_records.append(self.procedural_memory_system.instantiate_proc_record(**i['input']))
-        
-        if is_abstract and len(episodic_records) > 0:
-            await self.abstract_episodic_records_to_semantic_record(episodic_records)
-
-        print(f"[Info] Num of Semantic Records to add: {len(semantic_records)}")
-        print(f"[Info] Num of Episodic Records to add: {len(episodic_records)}")
-        print(f"[Info] Num of Procedural Records to add: {len(procedural_records)}")
-
-        self.semantic_memory_system.add(semantic_records)
-        self.episodic_memory_system.add(episodic_records)
-        self.procedural_memory_system.add(procedural_records)
-
-    async def multi_thread_transfer_dicts_to_memories(self, is_abstract: bool = False):
-        semantic_records = []
-        episodic_records = []
-        procedural_records = []
-
-        for i in self.slot_process.memory_dict:
-            if i['memory_type'] == 'semantic':
-                semantic_records.append(self.semantic_memory_system.instantiate_sem_record(**i['input']))
-            elif i['memory_type'] == 'episodic':
-                episodic_records.append(self.episodic_memory_system.instantiate_epi_record(**i['input']))
-            elif i['memory_type'] == 'procedural':
-                procedural_records.append(self.procedural_memory_system.instantiate_proc_record(**i['input']))
-
-        print(f"[Info] Num of Semantic Records to add: {len(semantic_records)}")
-        print(f"[Info] Num of Episodic Records to add: {len(episodic_records)}")
-        print(f"[Info] Num of Procedural Records to add: {len(procedural_records)}")
-        
-        if is_abstract and len(episodic_records) > 0:
-            await self.abstract_episodic_records_to_semantic_record(episodic_records)
-
-        if len(semantic_records) > 0:
-            try:
-                self.semantic_memory_system.upsert_normal_records(semantic_records)
-            except Exception as e:
-                import traceback
-                print("[ERROR] upsert_normal_records for semantic_records failed:", repr(e))
-                traceback.print_exc()
-        if len(episodic_records) > 0:
-            try:
-                self.episodic_memory_system.upsert_normal_records(episodic_records)
-            except Exception as e:
-                import traceback
-                print("[ERROR] upsert_normal_records for episodic_records failed:", repr(e))
-                traceback.print_exc()
-        if len(procedural_records) > 0:
-            try:
-                self.procedural_memory_system.upsert_normal_records(procedural_records)
-            except Exception as e:
-                import traceback
-                print("[ERROR] upsert_normal_records for procedural_records failed:", repr(e))
-                traceback.print_exc()
-
-    def multi_thread_transfer_slots_to_memories(self, max_workers: int = 20):
-        # Multi-threaded version
-        num_slots = len(self.slots)
-        print(f"[Info] Filtering and routing {num_slots} slots")
-        _multi_thread_run(self.slot_process.multi_thread_filter_and_route_slot, row_data=self.slots, max_workers=max_workers)
-        routed_slots = self.slot_process.routed_slot_container
-        num_routed_slots = len(routed_slots)
-        print(f"[Info] Transferring memories from {num_routed_slots} slots to memory systems")
-        _multi_thread_run(self.slot_process.multi_thread_transfer_slot_to_memory, row_data=routed_slots, max_workers=max_workers)
-        # transfer memories to records
-        asyncio.run(self.multi_thread_transfer_dicts_to_memories(is_abstract=False))
-
-    async def abstract_episodic_records_to_semantic_record(self, epi_records: List[EpisodicRecord], consistency_threshold: float = 0.8):
-        try:
-            abstract_result, cidmap2semrec = await self.episodic_memory_system.abstract_episodic_records(epi_records, consistency_threshold)
-            print(f"[Info] Number of abstracted semantic records: {len(abstract_result)}")
-            self.semantic_memory_system.upsert_abstract_semantic_records(abstract_result, cidmap2semrec)
-        except Exception as e:
-            import traceback
-            print("[ERROR] abstract_episodic_records_to_semantic_record failed:", repr(e))
-            traceback.print_exc()
+        self.memory_system.add(snapshot_events, user_id="agent", infer=False)

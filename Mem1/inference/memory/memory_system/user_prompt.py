@@ -66,18 +66,72 @@ STRICT OUTPUT: respond with a single lowercase word: `yes` or `no`. Do not expla
 </slot-dump>
 """)
 
+WORKING_SLOT_FC_FILTER_USER_PROMPT = dedent("""
+You guard a Function-Calling agent's long-term memory entrance. Decide if this candidate memory deserves promotion into FAISS storage.
+
+Your goal is to keep **reusable, high-level function-calling knowledge** that improves future tool-use (schema grounding, argument filling, error recovery, tool routing), not low-level logs.
+
+Evaluate the candidate along three dimensions:
+
+1. Reusable tool-use knowledge or pattern – Does it contain a rule, constraint, mapping, or recovery strategy that can help future function calls?
+   - Includes:
+     - Tool schema constraints (required fields, enums, type constraints, allowed ranges).
+     - Argument-filling strategies (how to infer/ask for missing required args; defaults; disambiguation).
+     - Tool selection/routing heuristics (when to use tool A vs B; order of tools).
+     - Common failure modes and fixes (400 invalid_request_error, missing tool output, bad JSON, rate limits, retries).
+     - Output-parsing templates (how to robustly extract JSON; handle code fences; validate before loads).
+     - Multi-turn FC protocol patterns (call_id pairing, tool_call -> tool_output -> next model call).
+
+2. Abstraction level – Is it more than a one-off trace?
+   - Prefer:
+     - General rules, checklists, invariants, and debugging playbooks.
+     - Minimal, canonical examples illustrating the rule.
+   - Avoid:
+     - Raw transcripts, stack traces, UUIDs, request IDs, or file paths **without** a generalized lesson.
+     - Exact tool outputs that are not reusable.
+     - “We tried X once” with no stable takeaway.
+
+3. Reliability and stability – Is it correct and likely to remain useful?
+   - Prefer:
+     - Behaviors required by the FC protocol (e.g., tool_call must have matching tool_output).
+     - Constraints directly grounded in tool specs or repeated observations.
+   - Avoid:
+     - Speculation about model internals.
+     - Ephemeral environment quirks (temporary outages) unless generalized as a robust fallback.
+
+Decision rule:
+- Default is slightly conservative, but you SHOULD store any candidate that carries at least one **non-trivial, reusable** FC rule or strategy.
+- Return `yes` if:
+  - The candidate includes some reusable tool-use knowledge/pattern (dimension 1), AND
+  - It is not dominated by pure logs/noise, AND
+  - It is at least moderately reliable (dimension 3) OR shows clear abstraction (dimension 2).
+- Return `no` if the candidate is:
+  - Mostly a one-off trace/log with no generalized rule,
+  - Extremely local to a single run/filepath/request-id,
+  - Or dominated by noise/IDs without a semantic core.
+
+When uncertain BUT the candidate contains at least one meaningful, reusable FC constraint or debugging strategy, prefer answering `yes` rather than `no`.
+
+STRICT OUTPUT: respond with a single lowercase word: `yes` or `no`. Do not explain.
+
+<slot-dump>
+{slot_dump}
+</slot-dump>
+""")
+
 
 WORKING_SLOT_ROUTE_USER_PROMPT = dedent("""
 Map this WorkingSlot to the correct ResearchAgent long-term memory family. Choose EXACTLY one label:
 
 - semantic: enduring insights, generalized conclusions, reusable heuristics.
 - episodic: Situation → Action → Result traces with metrics, timestamps, or narrative context.
+- procedural: step-by-step checklists, reusable commands, or skill blueprints.
 
 Tie-breaking rules:
 - Prefer episodic if a chronological action/result trail exists, even if insights appear.
 - Otherwise output semantic.
 
-Return only one of: "semantic", "episodic".
+Return only one of: "semantic", "episodic", "procedural".
 
 <slot-dump>
 {slot_dump}
@@ -205,16 +259,23 @@ Convert the BFCL tool-using agent trajectory into at most {max_slots} WorkingSlo
 BFCL characteristics to account for:
 - Multiple candidate tools may be present; only some are relevant.
 - Required parameters may be missing; the safe behavior is to ask for clarification (not guess).
-- Multi-turn: tool outputs in earlier turns often constrain later arguments.
+- Multi-step: tool outputs in earlier steps often constrain later arguments.
 - Some system messages explicitly forbid assumptions; preserve such constraints as evidence.
 - Tool descriptions / schemas can be noisy; store disambiguation rules as procedural experience.
 
-Goal:
-- Only create slots worth long-term reuse for future tool-calling tasks (not tied to a single test case).
-- A slot SHOULD be created if and only if it is one of:
-  (A) Semantic evidence: stable facts/constraints from user messages, system constraints, tool schemas, or tool outputs.
-  (B) Episodic experience: reusable strategy, reasoning pattern, failure mode, or recovery tactic observed in this trajectory.
-  (C) Procedural experience: actionable “how-to” steps for tool selection, argument filling, validation, execution, and post-processing.
+PRIMARY GOAL (IMPORTANT):
+Produce reusable, tool-agnostic knowledge. Prefer turning trajectory traces into:
+1) PROCEDURAL playbooks (checklists / steps you can reuse for new tools and new tasks),
+2) SEMANTIC invariants (constraints, schema rules, arg mappings grounded in evidence),
+and ONLY THEN episodic lessons (one-off “what happened” stories).
+
+Slot composition priority (VERY IMPORTANT):
+- Prefer PROCEDURAL and SEMANTIC slots over EPISODIC.
+- You MUST produce at least:
+  - 2 procedural-experience slots IF any tool call occurred in the snapshot,
+  - 1 semantic-evidence slot IF any explicit constraint/schema/output exists.
+- Create episodic-experience slots ONLY if they contain a failure mode or tactic that cannot be expressed as a general checklist/playbook.
+- If a takeaway can be written as a tool-agnostic rule/checklist/playbook, DO NOT write it as episodic.
 
 Never store:
 - Any gold labels or evaluator-only signals (if present).
@@ -228,8 +289,7 @@ Context Snapshot (may include dialogue history, tool schemas, tool outputs):
 
 Authoring rules:
 1. Each slot MUST capture exactly ONE reusable takeaway.
-2. Each slot MUST declare `memory_type` in {{"semantic","episodic","procedural"}}.
-3. `stage` MUST be one of:
+2. `stage` MUST be one of:
    - intent_constraints         # user intent + hard constraints (no sugar, metric units, etc.)
    - tool_selection             # selecting the right tool among distractors
    - argument_construction      # mapping text -> required args, filling enums, defaults policy
@@ -237,24 +297,35 @@ Authoring rules:
    - result_integration         # merging tool outputs into next-turn state/answer
    - error_handling             # retries, validation failures, unsupported protocol, etc.
    - meta                       # general insights, evaluation protocol concerns
-4. `summary` MUST be ≤90 words, self-contained, and follow Situation → Action → Result when possible.
-5. `topic` is a 3–7 word slug (lowercase, space-separated), e.g. "no-assumption parameter filling", "tool distractor disambiguation".
-6. `attachments` is optional but, when present, use these keys when relevant:
+3. `summary` MUST be ≤90 words, self-contained, and use the format depending on memory type:
+   - Procedural (preferred): Goal → Preconditions → Steps → Checks (compact, imperative).
+   - Semantic: Invariant/Constraint → Evidence → Implication.
+   - Episodic (only if needed): Situation → Action → Result.
+4. `topic` is a 3–7 word slug (lowercase, space-separated),
+   e.g. "no-assumption parameter filling", "tool distractor disambiguation".
+5. `attachments` is optional but, when present, use these keys when relevant:
    - "constraints": {{"items": []}}     # explicit do/don't rules (e.g., "ask for clarification")
    - "tool_schema": {{"items": []}}     # compact schema notes: required fields, enums, defaults policy
-   - "arg_map": {{"items": []}}         # text-to-arg mapping patterns (e.g., "NO SUGAR -> sweetness_level=none")
+   - "arg_map": {{"items": []}}         # text-to-arg mapping patterns
    - "observations": {{"items": []}}    # key tool outputs / environment facts (paraphrased)
    - "failures": {{"items": []}}        # error symptoms and likely causes
-   - "recovery": {{"steps": []}}        # concrete recovery steps (procedural)
-   - "checks": {{"items": []}}          # validation checks before calling tools
-7. `tags` is a list of lowercase keywords (≤6) mixing:
+   - "recovery": {{"steps": []}}        # REQUIRED for procedural slots: a reusable playbook (not only for failures)
+   - "checks": {{"items": []}}          # validation checks before/after calling tools
+6. For PROCEDURAL slots:
+   - You MUST include "recovery": {{"steps": [...]}} as a general reusable SOP (3–7 steps).
+   - Steps should be tool-agnostic when possible (e.g., "validate required fields", "confirm enums", "pair call_id").
+7. For SEMANTIC slots:
+   - Prefer filling "constraints"/"tool_schema"/"arg_map"/"observations" with compact bullets grounded in the snapshot.
+8. For EPISODIC slots:
+   - Keep them rare; must include a novel failure mode and a reusable fix not already covered by procedural playbooks.
+9. `tags` is a list of lowercase keywords (≤6) mixing:
    - domain: "bfcl","function-calling","multi-turn","tool-use"
    - memory type: "semantic-evidence","episodic-experience","procedural-experience"
    - skill: "tool-selection","arg-filling","clarification","validation","error-recovery","distractor-tools"
 
 Routing hints (implicit, do not add extra fields beyond schema):
 - semantic: store stable constraints, schemas, outputs, invariant mappings.
-- episodic: store strategies and failures that generalize across tools/tasks.
+- episodic: store rare strategies/failures that generalize but cannot be expressed as a generic SOP.
 - procedural: store step-by-step playbooks (pre-checks, arg filling, calling, interpreting, retrying).
 
 Output STRICTLY as JSON within the tags below (no extra commentary):
@@ -263,10 +334,11 @@ Output STRICTLY as JSON within the tags below (no extra commentary):
     {{
       "stage": "argument_construction",
       "topic": "no-assumption required-args protocol",
-      "summary": "Situation: Tool schema had required fields not present in the user request. Action: Ask a targeted clarification question listing missing required args rather than guessing. Result: Prevented invalid tool calls and aligned with system instruction forbidding assumptions.",
+      "summary": "Goal: produce a valid tool call without guessing. Preconditions: required fields missing in user text. Steps: ask for the missing fields explicitly; confirm enums; restate inferred args; request confirmation if ambiguous. Checks: verify all required fields present; verify enum values allowed. Result: avoids invalid requests and respects no-assumption rules.",
       "attachments": {{
-        "constraints": {{"items": ["do not guess missing required args; ask clarification"]}},
-        "checks": {{"items": ["verify all required fields present", "verify enum values allowed"]}}
+        "constraints": {{"items": ["do not guess missing required args; ask targeted clarification"]}},
+        "recovery": {{"steps": ["identify required args from schema", "compare against user-provided info", "ask a single clarification listing missing args", "confirm enum/value constraints", "construct call with only validated fields", "re-validate before sending"]}},
+        "checks": {{"items": ["all required fields present", "enum values allowed", "no conflicting constraints"]}}
       }},
       "tags": ["bfcl","function-calling","procedural-experience","arg-filling","clarification","validation"]
     }}
@@ -338,31 +410,6 @@ Output STRICTLY as JSON inside the tags, with no extra text:
 }}
 </semantic-record>
 """)
-
-#
-'''TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT = dedent("""
-Transform the WorkingSlot into a semantic memory entry suitable for FAISS retrieval.
-
-Expectations:
-- `summary` (≤80 words) expresses the enduring conclusion or heuristic.
-- `detail` should elaborate supporting evidence, metrics, or caveats. Use "\\n" to separate logically distinct statements.
-- `tags` mixes domain terms and method/process hints.
-
-<working-slot>
-{dump_slot_json}
-</working-slot>
-
-Output STRICTLY as JSON inside the tags:
-<semantic-record>
-{{
-    "summary": "semantic insight summary",
-    "detail": "expanded reasoning and context",
-    "tags": ["keyword1","keyword2"]
-}}
-</semantic-record>
-"""
-)'''
-#
 
 TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT = dedent("""
 Convert the WorkingSlot into an episodic memory record emphasizing Situation → Action → Result.

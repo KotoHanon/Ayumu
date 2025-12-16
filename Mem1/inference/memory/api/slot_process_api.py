@@ -97,7 +97,7 @@ class SlotProcess:
 
         return scored_slots[:k]
         
-    async def filter_and_route_slots(self, slots: List[WorkingSlot] = None) -> List[Dict[str, WorkingSlot]]:
+    async def filter_and_route_slots(self, slots: List[WorkingSlot] = None, task: Literal["experiment", "qa", "fc"] = "qa") -> List[Dict[str, WorkingSlot]]:
         self.filtered_slot_container = []
         self.routed_slot_container = []
 
@@ -105,14 +105,14 @@ class SlotProcess:
             slots = list(self.slot_container.values())
 
         for slot in tqdm(slots):
-            check_result = await slot.slot_filter(self.llm_model)
+            check_result = await slot.slot_filter(self.llm_model, task=task)
             print(check_result)
             if check_result == True:
                 self.filtered_slot_container.append(slot)
         
         try:
             for filtered_slot in self.filtered_slot_container:
-                route_result = await filtered_slot.slot_router(self.llm_model)
+                route_result = await filtered_slot.slot_router(self.llm_model, task=task)
                 pair = {
                     "memory_type": route_result,
                     "slot": filtered_slot
@@ -123,8 +123,8 @@ class SlotProcess:
         
         return self.routed_slot_container
 
-    def multi_thread_filter_and_route_slot(self, slot: WorkingSlot):
-        check_result = asyncio.run(slot.slot_filter(self.llm_model))
+    def multi_thread_filter_and_route_slot(self, slot: WorkingSlot, task: Literal["experiment", "qa", "fc"] = "qa"):
+        check_result = asyncio.run(slot.slot_filter(self.llm_model, task=task))
         if check_result == True:
             try:
                 route_result = asyncio.run(slot.slot_router(self.llm_model))
@@ -213,7 +213,7 @@ class SlotProcess:
             user_prompt=user_prompt, 
             json_schema=qa_task_slot_schema, 
             schema_name="QA_TASK_SLOT_SCHEMA",
-            strict=True)
+            strict=False)
         data = json.loads(response)
         if not data:
             return []
@@ -269,7 +269,8 @@ class SlotProcess:
             user_prompt=user_prompt, 
             json_schema=fc_task_slot_schema, 
             schema_name="FC_TASK_SLOT_SCHEMA",
-            strict=True)
+            strict=False,
+            max_tokens=4096)
         data = json.loads(response)
         if not data:
             return []
@@ -334,7 +335,7 @@ class SlotProcess:
             user_prompt=user_prompt, 
             json_schema=experiment_task_slot_schema, 
             schema_name="EXPERIMENT_TASK_SLOT_SCHEMA",
-            strict=True)
+            strict=False)
         data = json.loads(response)
 
         slots_data = data.get("slots", [])
@@ -410,6 +411,8 @@ class SlotProcess:
                 input_dict = asyncio.run(self.transfer_slot_to_semantic_record(slot))
             elif memory_type == "episodic":
                 input_dict = asyncio.run(self.transfer_slot_to_episodic_record(slot))
+            elif memory_type == "procedural":
+                input_dict = asyncio.run(self.transfer_slot_to_procedural_record(slot))
         except Exception as exc:
             print(
                 f"[MEMORY] Failed to convert slot {getattr(slot, 'id', 'unknown')} "

@@ -46,10 +46,6 @@ class Schema:
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                "memory_type": {
-                    "type": "string",
-                    "enum": ["semantic", "episodic", "procedural"]
-                },
                 "stage": {
                     "type": "string",
                     "enum": [

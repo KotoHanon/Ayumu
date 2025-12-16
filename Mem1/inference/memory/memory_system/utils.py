@@ -2,10 +2,12 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Iterable, Optional, Tuple, Any, Dict, List
 from pathlib import Path
+from tqdm import tqdm
 
 import logging
 import json, re
 import numpy as np
+import concurrent.futures
 
 def setup_logger(name: str, log_path: str, level=logging.INFO) -> logging.Logger:
     log_path = Path(log_path)
@@ -220,3 +222,7 @@ def _drain_snapshot(event_buffer: List[str], max_chars: int = 4000) -> str:
         snapshot = snapshot[-max_chars:] # keep the last max_chars
     event_buffer.clear()
     return snapshot
+
+def _multi_thread_run(func, row_data: List[Tuple], max_workers: int = 20):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        list(tqdm(executor.map(func, row_data), total=len(row_data)))
