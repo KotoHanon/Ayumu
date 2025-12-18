@@ -113,10 +113,10 @@ class OpenAIResponsesHandlerWithMem0(BaseHandler):
             out.append(m)
         return out
 
-    def _inject_memory(self, query_text: str, message: list[dict], threshold: float = 0.4):
+    def _inject_memory(self, query_text: str, message: list[dict]):
         # Retrieve relevant memories
         try:
-            returns = self.memory_system.search(message, user_id=f"agent", limit=3)
+            returns = self.memory_system.search(query_text, user_id=f"agent", limit=3)
             print("Raw returns from memory search:", returns)
             if isinstance(returns, list):
                 relevant_memories = returns
@@ -457,43 +457,6 @@ class OpenAIResponsesHandlerWithMem0(BaseHandler):
             return self._flatten_user_content(m.get("content", ""))
         return ""
 
-    def _coerce_role(self, role):
-        if role in ALLOWED_ROLES:
-            return role
-        return None
-
-    def _content_to_text(self, content) -> str:
-        if content is None:
-            return ""
-        if isinstance(content, str):
-            return content
-        # Responses content parts
-        if isinstance(content, list):
-            parts = []
-            for p in content:
-                t = getattr(p, "text", None)
-                if isinstance(t, str):
-                    parts.append(t)
-            return "".join(parts)
-        return str(content)
-
-    def _normalize_and_filter_messages_for_openai(self, msg):
-        out = []
-        for m in (msg if isinstance(msg, list) else [msg]):
-            if isinstance(m, dict):
-                role = self._coerce_role(m.get("role"))
-                content = self._content_to_text(m.get("content"))
-            else:
-                role = self._coerce_role(getattr(m, "role", None))
-                content = self._content_to_text(getattr(m, "content", None))
-
-            if role is None:
-                continue
-
-            if content is None:
-                content = ""
-            out.append({"role": role, "content": content})
-        return out
 
     def _materialize_turn_slots(self, max_slots: int = 8):
         # transfer the latest turn snapshot to working slots

@@ -3,6 +3,10 @@ import json
 import os
 import time
 import asyncio
+import logging
+import sys
+from pathlib import Path
+from uuid import uuid4
 
 from bfcl_eval.constants.type_mappings import GORILLA_TO_OPENAPI
 from bfcl_eval.model_handler.base_handler import BaseHandler
@@ -19,9 +23,27 @@ from bfcl_eval.model_handler.utils import (
 from openai import OpenAI, RateLimitError
 from openai.types.responses import Response
 from typing import List, Any, Optional
+from datetime import datetime
+from memory.memory_system.utils import (
+    _push_event,
+    _drain_snapshot,
+    _safe_dump_str,
+    _multi_thread_run,
+    setup_logger,
+)
+from mem0 import Memory
 
-from amem.memory_system import AgenticMemorySystem
+from inference.amem.memory_system import AgenticMemorySystem
 
+PROJECT_ROOT = Path(__file__).resolve().parents[6]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+log_filename = datetime.now().strftime("eval_%Y%m%d_%H%M%S.log")
+faiss_root = "/tmp/faiss_memories"
+kuzu_root = "/tmp/kuzu_graphs"
+os.makedirs(faiss_root, exist_ok=True)
+os.makedirs(kuzu_root, exist_ok=True)
+store_time = f"store_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
 
 class OpenAIResponsesHandlerWithMem0G(BaseHandler):
     MEM_TAG = "PRIVATE_MEMORY:"
@@ -32,50 +54,47 @@ class OpenAIResponsesHandlerWithMem0G(BaseHandler):
         self.model_name = model_name
         self.client = OpenAI(**self._build_client_kwargs())
 
-        faiss_root = "/tmp/faiss_memories"
-        kuzu_root = "/tmp/kuzu_graphs"
-        os.makedirs(faiss_root, exist_ok=True)
-        os.makedirs(kuzu_root, exist_ok=True)
-        store_time = f"store_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
-        # Initialize the memory system 🚀
         self.config = {
-                "llm": {
-                    "provider": "openai",
-                    "config": {
-                        "model": "gpt-4o-mini",
-                        "temperature": 0.01,
-                        "max_tokens": 2000,
-                    }
-                },
-                "vector_store": {
-                    "provider": "faiss",
-                    "config": {
-                        "collection_name": "test",
-                        "path": os.path.join(faiss_root, store_time),
-                        "distance_strategy": "euclidean"
-                    }
-                },
-                "embedder": {
-                    "provider": "openai",
-                    "config": {
-                        "model": "text-embedding-3-small"
-                    }
-                },
-                "memory": {
-                    "auto_embed": True,
-                    "summarization": True,
-                },
-                "graph_store": {
-                    "provider": "kuzu",
-                    "config": {
-                        "db": os.path.join(kuzu_root, store_time),
-                    },
+            "llm": {
+                "provider": "openai",
+                "config": {
+                    "model": "gpt-4o-mini",
+                    "temperature": 0.01,
+                    "max_tokens": 2000,
                 }
+            },
+            "vector_store": {
+                "provider": "faiss",
+                "config": {
+                    "collection_name": "test",
+                    "path": os.path.join(faiss_root, store_time),
+                    "distance_strategy": "euclidean"
+                }
+            },
+            "embedder": {
+                "provider": "openai",
+                "config": {
+                    "model": "text-embedding-3-small"
+                }
+            },
+            "memory": {
+                "auto_embed": True,
+                "summarization": True,
+            },
+            "graph_store": {
+                "provider": "kuzu",
+                "config": {
+                    "db": os.path.join(kuzu_root, store_time),
+                },
             }
-
+        }
         self.memory_system = Memory.from_config(self.config)
+        self._cur_test_id = None
+        self._event_buffer: List[str] = []
 
-    
+        self.logger_context = setup_logger("context", log_path=os.path.join("log/mem0/context/", log_filename) ,level=logging.INFO)
+        self.logger_memory = setup_logger("memory", log_path=os.path.join("log/mem0/memory/", log_filename) ,level=logging.INFO)
+
     def _build_client_kwargs(self):
         kwargs = {}
         if api_key := os.getenv("OPENAI_API_KEY"):
@@ -93,41 +112,53 @@ class OpenAIResponsesHandlerWithMem0G(BaseHandler):
                 prompt["role"] = "developer"
         return prompts
 
-    def _reset_if_new_case(self, test_id: str):
-        if test_id != self._cur_test_id:
-            # push the lateset turn context to slots
-            snapshot_events = _drain_snapshot(event_buffer=self._event_buffer)
-            self.memory_system.add(snapshot_events, user_id="agent", infer=False)
-
-    def _strip_old_memory_block(self, message: list[dict]) -> list[dict]:
+    def _strip_old_memory_block_keep_fc_items(self, message: list) -> list:
         out = []
         for m in message:
-            if m.get("role") == "developer" and isinstance(m.get("content"), str) and m["content"].startswith(self.MEM_TAG):
-                continue
+            if isinstance(m, dict):
+                if m.get("role") == "user" and isinstance(m.get("content"), str) and m["content"].startswith(self.MEM_TAG):
+                    continue
             out.append(m)
         return out
 
     def _inject_memory(self, query_text: str, message: list[dict]):
-
-        returns = self.memory_system.search(query_text, limit=3, user_id="agent")
-        if isinstance(returns, list):
-            relevant_memories = returns
-        else:
-            relevant_memories = returns['results']
-        print("1st relevant_memories:", relevant_memories[0]['memory'] if len(relevant_memories) > 0 else "None")
+        # Retrieve relevant memories
+        try:
+            returns = self.memory_system.search(query_text, user_id=f"agent", limit=3)
+            print("Raw returns from memory search:", returns)
+            if isinstance(returns, list):
+                relevant_memories = returns
+            else:
+                relevant_memories = returns['results']
+        except Exception as e:
+            print("[Error] Memory search failed:", repr(e))
+            relevant_memories = []
         memories_str = "\n".join(f"- {entry['memory']}" for entry in relevant_memories)
 
+        self.logger_memory.info(f"[Info] Retrieved Memories for Query '{query_text}': {memories_str}")
+
         mem_msg = {
-            "role": "developer",
+            "role": "user",
             "content": (
                 f"{self.MEM_TAG}\n"
-                "Below is the agent's private memory from earlier turns in THIS test case.\n"
-                "Use it only if helpful; do not mention it explicitly.\n\n"
+                "Context note (optional): the following are retrieved memories. "
+                "They may be irrelevant. Prioritize the current user request.\n\n"
                 "Here are some relevant memories:\n"
                 f"{memories_str}\n"
             ),
         }
-        return [mem_msg] + message
+
+        last_user_idx = None
+        for i in range(len(message) - 1, -1, -1):
+            if isinstance(message[i], dict) and message[i].get("role") == "user":
+                last_user_idx = i
+                break
+
+        if last_user_idx is None:
+            # No user message found; just prepend
+            return [mem_msg] + message
+
+        return message[:last_user_idx] + [mem_msg] + message[last_user_idx:]
 
     @retry_with_backoff(error_type=RateLimitError)
     def generate_with_backoff(self, **kwargs):
@@ -140,10 +171,13 @@ class OpenAIResponsesHandlerWithMem0G(BaseHandler):
         message: list[dict] = inference_data["message"]
         tools = inference_data["tools"]
 
-        message = self._strip_old_memory_block(message)
-        message = self._normalize_messages(message)
-        query_text = self._extract_latest_user_query_text(message)
+        # 1. remove old memory blocks but keep function call items
+        message = self._strip_old_memory_block_keep_fc_items(message)
+        # 2. extract latest user query text
+        query_text = self._extract_latest_user_query_text_keep_fc_items(message)
+        # 3. inject memory
         message = self._inject_memory(query_text=query_text, message=message)
+        
         inference_data["message"] = message
 
         inference_data["inference_input_log"] = {"message": repr(message), "tools": tools}
@@ -167,9 +201,8 @@ class OpenAIResponsesHandlerWithMem0G(BaseHandler):
 
         return self.generate_with_backoff(**kwargs)
 
-    def _pre_query_processing_FC(self, inference_data: dict, test_entry: dict) -> dict:
-        self._reset_if_new_case(test_entry["id"])
 
+    def _pre_query_processing_FC(self, inference_data: dict, test_entry: dict) -> dict:
         for round_idx in range(len(test_entry["question"])):
             test_entry["question"][round_idx] = self._substitute_prompt_role(test_entry["question"][round_idx])
 
@@ -225,8 +258,12 @@ class OpenAIResponsesHandlerWithMem0G(BaseHandler):
 
     def _add_assistant_message_FC(self, inference_data: dict, model_response_data: dict) -> dict:
         inference_data["message"].extend(model_response_data["model_responses_message_for_chat_history"])
-        memory = str(model_response_data["model_responses"])[:2000]
+        memory = str(model_response_data["model_responses"])
         _push_event(self._event_buffer, "ASSISTANT", memory)
+
+        if len(model_response_data.get("tool_call_ids", [])) == 0:
+            # No tool calls means that the end of turn
+            self._materialize_turn_slots(max_slots=8)
         return inference_data
 
     def _add_execution_results_FC(self, inference_data: dict, execution_results: list[str], model_response_data: dict) -> dict:
@@ -238,9 +275,8 @@ class OpenAIResponsesHandlerWithMem0G(BaseHandler):
 
     def _query_prompting(self, inference_data: dict):
         msg = inference_data["message"]
-        msg = self._normalize_messages(msg)
-        msg = self._strip_old_memory_block(msg)
-        query_text = self._extract_latest_user_query_text(msg)
+        msg = self._strip_old_memory_block_keep_fc_items(msg)
+        query_text = self._extract_latest_user_query_text_keep_fc_items(msg)
         print(f"[Debug] Query Text for Memory Injection: {query_text}")
         msg = self._inject_memory(query_text=query_text, message=msg)
         inference_data["message"] = msg
@@ -264,8 +300,6 @@ class OpenAIResponsesHandlerWithMem0G(BaseHandler):
         return self.generate_with_backoff(**kwargs)
 
     def _pre_query_processing_prompting(self, test_entry: dict) -> dict:
-        self._reset_if_new_case(test_entry["id"])
-
         functions: list = test_entry["function"]
         test_entry_id: str = test_entry["id"]
 
@@ -321,7 +355,29 @@ class OpenAIResponsesHandlerWithMem0G(BaseHandler):
         _push_event(self._event_buffer, "TOOL_RESULT", formatted_results_message[:2000])
         return inference_data
 
-    from typing import Any
+    def decode_ast(self, result, language, has_tool_call_tag):
+        if self.is_fc_model:
+            decoded_output = []
+            for invoked_function in result:
+                name = list(invoked_function.keys())[0]
+                params = json.loads(invoked_function[name])
+                decoded_output.append({name: params})
+            return decoded_output
+        else:
+            return default_decode_ast_prompting(result, language, has_tool_call_tag)
+
+    def decode_execute(self, result, has_tool_call_tag):
+        if self.is_fc_model:
+            return convert_to_function_call(result)
+        else:
+            return default_decode_execute_prompting(result, has_tool_call_tag)
+
+    def _extract_latest_user_query_text_keep_fc_items(self, message: list) -> str:
+        for m in reversed(message):
+            if isinstance(m, dict) and m.get("role") == "user":
+                return str(m.get("content", ""))
+        return ""
+
 
     def _flatten_user_content(self, content: Any) -> str:
         """Flatten user message content into plain text."""
@@ -408,3 +464,13 @@ class OpenAIResponsesHandlerWithMem0G(BaseHandler):
                 continue
             return self._flatten_user_content(m.get("content", ""))
         return ""
+
+
+    def _materialize_turn_slots(self, max_slots: int = 8):
+        # transfer the latest turn snapshot to working slots
+        snapshot_events = _drain_snapshot(event_buffer=self._event_buffer)
+        self.logger_context.info(f"[Info] Materializing context: {snapshot_events}")
+        if not snapshot_events:
+            return
+
+        self.memory_system.add(snapshot_events, user_id="agent", infer=False)

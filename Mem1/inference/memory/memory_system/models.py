@@ -27,7 +27,6 @@ class EpisodicRecord(object):
             "stage": self.stage,
             "summary": self.summary,
             "detail": self.detail,
-            "embedding": self.embedding,
             "tags": list(self.tags),
             "created_at": self.created_at,
         }

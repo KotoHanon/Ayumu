@@ -53,6 +53,7 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
         self.episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_name=model_name, llm_backend="openai")
         self.procedural_memory_system = FAISSMemorySystem(memory_type="procedural", llm_name=model_name, llm_backend="openai")
         self._cur_test_id = None
+        self._turn_injected_once = False # Only inject memory once per turn, at the beginning.
 
         self.logger_context = setup_logger("context", log_path=os.path.join("log/ayumu/context/", log_filename) ,level=logging.INFO)
         self.logger_memory = setup_logger("memory", log_path=os.path.join("log/ayumu/memory/", log_filename) ,level=logging.INFO)
@@ -98,33 +99,48 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
             out.append(m)
         return out
 
-    def _inject_memory(self, query_text: str, message: list[dict], threshold: float = 0.4):
-
+    def slot_query(self, query_text: str, message: List[dict]):
         slot_query_limit = 3
+        if len(query_text) > 0:
+            relevant_slots = self.slot_process.query(query_text=query_text, slots=self.slots, limit=slot_query_limit, use_svd=True, embed_func=self.semantic_memory_system.vector_store._embed)
+        else:
+            relevant_slots = []
+        return relevant_slots
+
+    def long_term_memory_query(self, query_text: str, message: List[dict], threshold: float = 0.5):
         sem_query_limit = min(3, self.semantic_memory_system.size // 3)
         epi_query_limit = min(3, self.episodic_memory_system.size // 3)
         proc_query_limit = min(3, self.procedural_memory_system.size // 3)
 
         if len(query_text) > 0:
-            relevant_slots = self.slot_process.query(query_text=query_text, slots=self.slots, limit=slot_query_limit, key_words=message.split(), use_svd=True, embed_func=self.semantic_memory_system.vector_store._embed)
             relevant_semantic_memories = self.semantic_memory_system.query(query_text=query_text, limit=sem_query_limit, threshold=threshold)
             relevant_episodic_memories = self.episodic_memory_system.query(query_text=query_text, limit=epi_query_limit)
             relevant_procedural_memories = self.procedural_memory_system.query(query_text=query_text, limit=proc_query_limit)
-            
         else:
-            relevant_slots = []
             relevant_semantic_memories = []
             relevant_episodic_memories = []
             relevant_procedural_memories = []
         
+        return relevant_semantic_memories, relevant_episodic_memories, relevant_procedural_memories
+
+    def _inject_memory(self, query_text: str, message: List[dict], threshold: float = 0.5):
+
+        relevant_slots = self.slot_query(query_text=query_text, message=message)
+        # Only inject long-term memory once per turn
+        if self._turn_injected_once == True:
+            relevant_semantic_memories, relevant_episodic_memories, relevant_procedural_memories = [], [], []
+        else:
+            relevant_semantic_memories, relevant_episodic_memories, relevant_procedural_memories = self.long_term_memory_query(query_text=query_text, message=message, threshold=threshold)
+            self._turn_injected_once = True
+
         if len(relevant_slots) > 0:
             print(f"[Info] Size of Retrieved Slots: {len(relevant_slots)}")
             print(f"[Info] 1st Retrieved Slot: {_safe_dump_str(relevant_slots[0])}")
 
         slots_str = "\n".join(f"- {_safe_dump_str(entry[1].summary)}" for entry in relevant_slots)
-        semantic_memories_str = "\n".join(f"- {entry[1].summary}" for entry in relevant_semantic_memories)
-        episodic_memories_str = "\n".join(f"- {_safe_dump_str(entry[1])}" for entry in relevant_episodic_memories)
-        procedural_memories_str = "\n".join(f"- {_safe_dump_str(entry[1])}" for entry in relevant_procedural_memories)
+        semantic_memories_str = "\n".join(f"- {_safe_dump_str(entry[1].to_dict())}" for entry in relevant_semantic_memories)
+        episodic_memories_str = "\n".join(f"- {_safe_dump_str(entry[1].to_dict())}" for entry in relevant_episodic_memories)
+        procedural_memories_str = "\n".join(f"- {_safe_dump_str(entry[1].to_dict())}" for entry in relevant_procedural_memories)
 
         self.logger_memory.info(f"Retrieved Slots:\n{slots_str} \nRetrieved Semantic Memories:\n{semantic_memories_str}\nRetrieved Episodic Memories:\n{episodic_memories_str}\nRetrieved Procedural Memories:\n{procedural_memories_str}")
 
@@ -263,7 +279,7 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
 
         if len(model_response_data.get("tool_call_ids", [])) == 0:
             # No tool calls means that the end of turn
-            self._materialize_turn_slots(max_slots=8)
+            self._materialize_turn_slots(max_slots=10)
         return inference_data
 
     def _add_execution_results_FC(self, inference_data: dict, execution_results: list[str], model_response_data: dict) -> dict:
@@ -413,51 +429,6 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
                     return v.strip()
         return ""
 
-    def _content_to_text(self, content) -> str:
-        # dict messages: content is usually str
-        if isinstance(content, str):
-            return content
-
-        # Responses output message: content is often a list of parts with .text
-        if isinstance(content, list):
-            parts = []
-            for p in content:
-                t = getattr(p, "text", None)
-                if isinstance(t, str):
-                    parts.append(t)
-            return "".join(parts)
-
-        # fallback
-        if content is None:
-            return ""
-        return str(content)
-
-
-    def _normalize_one_message(self, m) -> dict:
-        # Already a dict message
-        if isinstance(m, dict):
-            # ensure content is str (some code puts list parts here too)
-            return {
-                "role": m.get("role"),
-                "content": self._content_to_text(m.get("content")),
-            }
-
-        # Responses API output object (pydantic): ResponseOutputMessage
-        role = getattr(m, "role", None)
-        content = getattr(m, "content", None)
-        return {
-            "role": role,
-            "content": self._content_to_text(content),
-        }
-
-
-    def _normalize_messages(self, msg):
-        # msg should be list of messages
-        if isinstance(msg, list):
-            return [self._normalize_one_message(m) for m in msg]
-
-        # Sometimes msg might be a single message
-        return [self._normalize_one_message(msg)]
 
     def _extract_latest_user_query_text(self, message: list[dict]) -> str:
         """Get the latest user turn text as query_text for memory retrieval."""
@@ -467,43 +438,6 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
             return self._flatten_user_content(m.get("content", ""))
         return ""
 
-    def _coerce_role(self, role):
-        if role in ALLOWED_ROLES:
-            return role
-        return None
-
-    def _content_to_text(self, content) -> str:
-        if content is None:
-            return ""
-        if isinstance(content, str):
-            return content
-        # Responses content parts
-        if isinstance(content, list):
-            parts = []
-            for p in content:
-                t = getattr(p, "text", None)
-                if isinstance(t, str):
-                    parts.append(t)
-            return "".join(parts)
-        return str(content)
-
-    def _normalize_and_filter_messages_for_openai(self, msg):
-        out = []
-        for m in (msg if isinstance(msg, list) else [msg]):
-            if isinstance(m, dict):
-                role = self._coerce_role(m.get("role"))
-                content = self._content_to_text(m.get("content"))
-            else:
-                role = self._coerce_role(getattr(m, "role", None))
-                content = self._content_to_text(getattr(m, "content", None))
-
-            if role is None:
-                continue
-
-            if content is None:
-                content = ""
-            out.append({"role": role, "content": content})
-        return out
 
     def _materialize_turn_slots(self, max_slots: int = 8):
         # transfer the latest turn snapshot to working slots
@@ -522,6 +456,8 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
             self.logger_context.info(f"New Slot\n: {_safe_dump_str(slot)}")
             self.slot_process.add_slot(slot)
         self.slots.extend(new_slots)
+
+        self._turn_injected_once = False # Reset for next turn
 
     async def transfer_slots_to_memories(self, slots: List[WorkingSlot], is_abstract: bool = False):
         if len(slots) == 0:

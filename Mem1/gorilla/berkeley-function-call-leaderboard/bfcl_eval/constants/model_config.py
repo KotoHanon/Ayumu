@@ -27,6 +27,7 @@ from bfcl_eval.model_handler.api_inference.openai_response import OpenAIResponse
 from bfcl_eval.model_handler.api_inference.openai_response_with_ayumu import OpenAIResponsesHandlerWithMemory
 from bfcl_eval.model_handler.api_inference.openai_response_with_amem import OpenAIResponsesHandlerWithAMem
 from bfcl_eval.model_handler.api_inference.openai_response_with_mem0 import OpenAIResponsesHandlerWithMem0
+from bfcl_eval.model_handler.api_inference.openai_response_with_mem0_g import OpenAIResponsesHandlerWithMem0G
 from bfcl_eval.model_handler.api_inference.qwen import (
     QwenAgentNoThinkHandler,
     QwenAgentThinkHandler,
@@ -401,6 +402,18 @@ api_inference_model_map = {
         org="OpenAI",
         license="Proprietary",
         model_handler=OpenAIResponsesHandlerWithMem0,
+        input_price=0.15,
+        output_price=0.6,
+        is_fc_model=True,
+        underscore_to_dot=True,
+    ),
+    "gpt-4o-mini-mem0-g-2024-07-18-FC": ModelConfig(
+        model_name="gpt-4o-mini-2024-07-18",
+        display_name="GPT-4o-mini-2024-07-18 (FC)",
+        url="https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/",
+        org="OpenAI",
+        license="Proprietary",
+        model_handler=OpenAIResponsesHandlerWithMem0G,
         input_price=0.15,
         output_price=0.6,
         is_fc_model=True,

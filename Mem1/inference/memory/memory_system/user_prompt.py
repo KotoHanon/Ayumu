@@ -254,33 +254,52 @@ Output STRICTLY as JSON within the tags below (no extra commentary):
 """)
 
 TRANSFER_FC_AGENT_CONTEXT_TO_WORKING_SLOT_PROMPT = dedent("""
-Convert the BFCL tool-using agent trajectory into at most {max_slots} WorkingSlot entries ready for filtering/routing.
+Convert the FC Agent workflow context into at most {max_slots} WorkingSlot entries ready for filtering/routing.
 
 BFCL characteristics to account for:
 - Multiple candidate tools may be present; only some are relevant.
-- Required parameters may be missing; the safe behavior is to ask for clarification (not guess).
-- Multi-step: tool outputs in earlier steps often constrain later arguments.
+- Required parameters may be missing; safe behavior is to ask for clarification (not guess).
+- Multi-step: tool outputs in earlier steps constrain later arguments; retries are common.
 - Some system messages explicitly forbid assumptions; preserve such constraints as evidence.
 - Tool descriptions / schemas can be noisy; store disambiguation rules as procedural experience.
 
 PRIMARY GOAL (IMPORTANT):
-Produce reusable, tool-agnostic knowledge. Prefer turning trajectory traces into:
-1) PROCEDURAL playbooks (checklists / steps you can reuse for new tools and new tasks),
-2) SEMANTIC invariants (constraints, schema rules, arg mappings grounded in evidence),
-and ONLY THEN episodic lessons (one-off “what happened” stories).
+Store only **reusable, retrieval-worthy** memories that improve future tool-use accuracy.
+Prefer:
+1) PROCEDURAL playbooks (tool-agnostic checklists you can reuse),
+2) SEMANTIC invariants (validated constraints / schema rules / arg mappings grounded in evidence),
+and only then EPISODIC lessons (rare failure modes not expressible as a generic SOP).
 
-Slot composition priority (VERY IMPORTANT):
-- Prefer PROCEDURAL and SEMANTIC slots over EPISODIC.
-- You MUST produce at least:
-  - 2 procedural-experience slots IF any tool call occurred in the snapshot,
-  - 1 semantic-evidence slot IF any explicit constraint/schema/output exists.
-- Create episodic-experience slots ONLY if they contain a failure mode or tactic that cannot be expressed as a general checklist/playbook.
-- If a takeaway can be written as a tool-agnostic rule/checklist/playbook, DO NOT write it as episodic.
+CRITICAL QUALITY BAR (MOST IMPORTANT):
+- If the snapshot does NOT contain any **novel, validated** takeaway, output ZERO slots (empty list).
+- DO NOT generate generic boilerplate SOPs ("validate required fields", "confirm enums") unless the snapshot provides a specific, non-obvious constraint, mapping, or failure/fix that would change behavior next time.
+- Prefer 1–3 high-signal slots over many low-signal slots.
+- Do NOT store raw chain-of-thought or verbose inner reasoning.
 
-Never store:
-- Any gold labels or evaluator-only signals (if present).
-- Raw chain-of-thought or verbose inner reasoning; keep summaries outcome-focused.
-- Overly specific private strings that are not reusable (e.g., full addresses/IDs) unless they illustrate a general rule. Prefer anonymized patterns.
+SUCCESS-PATH PRIORITY (VERY IMPORTANT):
+- Prefer takeaways from steps that are **ultimately used** or **validated** by tool schema / tool outputs / final answer.
+- Do NOT store intermediate hypotheses or attempts that are contradicted later in the snapshot.
+- Failures may be stored ONLY as "symptom → likely cause → reusable fix", and must include a clear trigger/condition.
+
+EVIDENCE & GROUNDEDNESS (VERY IMPORTANT):
+- Every slot must cite evidence from the snapshot via attachments:
+  - semantic: evidence via "tool_schema"/"observations"/"constraints"/"arg_map"
+  - procedural: evidence via "checks"/"failures" (if any) + a grounded playbook
+- If you cannot ground a claim in the snapshot (schema text, tool output, explicit constraint), do NOT store it.
+
+ALLOWLIST OF SPECIFIC TOKENS (IMPORTANT):
+- You are encouraged to preserve **non-private** schema tokens when decisive:
+  - required field names, enum literals, tool names, tool call/response protocol tokens.
+- Do NOT include private IDs (addresses, account numbers). If needed, anonymize them.
+
+DEDUPLICATION (IMPORTANT):
+- If two candidate slots would be near-duplicates, keep only the more general and more evidenced one.
+- Each slot must capture EXACTLY ONE reusable takeaway.
+
+OUTPUT SIZE POLICY:
+- Target 1–3 slots.
+- You may output 0 slots.
+- Only output >3 slots if the snapshot contains multiple distinct validated constraints AND at least one rare failure/fix.
 
 Context Snapshot (may include dialogue history, tool schemas, tool outputs):
 <bfcl-context>
@@ -290,43 +309,41 @@ Context Snapshot (may include dialogue history, tool schemas, tool outputs):
 Authoring rules:
 1. Each slot MUST capture exactly ONE reusable takeaway.
 2. `stage` MUST be one of:
-   - intent_constraints         # user intent + hard constraints (no sugar, metric units, etc.)
+   - intent_constraints         # user intent + hard constraints (units, style, "no assumptions", etc.)
    - tool_selection             # selecting the right tool among distractors
-   - argument_construction      # mapping text -> required args, filling enums, defaults policy
+   - argument_construction      # mapping text -> required args, enums, defaults policy
    - tool_execution             # calling tools, handling returned outputs
    - result_integration         # merging tool outputs into next-turn state/answer
    - error_handling             # retries, validation failures, unsupported protocol, etc.
-   - meta                       # general insights, evaluation protocol concerns
-3. `summary` MUST be ≤90 words, self-contained, and use the format depending on memory type:
+   - meta                       # evaluation protocol / agent-control insights
+3. `summary` MUST be ≤90 words, self-contained, and use the format by memory type:
    - Procedural (preferred): Goal → Preconditions → Steps → Checks (compact, imperative).
    - Semantic: Invariant/Constraint → Evidence → Implication.
-   - Episodic (only if needed): Situation → Action → Result.
+   - Episodic (rare): Situation → Action → Result → Fix/Generalization.
 4. `topic` is a 3–7 word slug (lowercase, space-separated),
-   e.g. "no-assumption parameter filling", "tool distractor disambiguation".
+   e.g. "no-assumption arg filling", "tool distractor disambiguation".
 5. `attachments` is optional but, when present, use these keys when relevant:
-   - "constraints": {{"items": []}}     # explicit do/don't rules (e.g., "ask for clarification")
-   - "tool_schema": {{"items": []}}     # compact schema notes: required fields, enums, defaults policy
-   - "arg_map": {{"items": []}}         # text-to-arg mapping patterns
-   - "observations": {{"items": []}}    # key tool outputs / environment facts (paraphrased)
-   - "failures": {{"items": []}}        # error symptoms and likely causes
-   - "recovery": {{"steps": []}}        # REQUIRED for procedural slots: a reusable playbook (not only for failures)
-   - "checks": {{"items": []}}          # validation checks before/after calling tools
+   - "constraints": {{"items": []}}      # explicit do/don't rules from snapshot
+   - "tool_schema": {{"items": []}}      # compact schema notes: required fields, enums, defaults policy
+   - "arg_map": {{"items": []}}          # text-to-arg mapping patterns grounded in snapshot
+   - "observations": {{"items": []}}     # key tool outputs / environment facts (paraphrased)
+   - "failures": {{"items": []}}         # error symptoms + likely causes (only if seen)
+   - "recovery": {{"steps": []}}         # reusable playbook steps (3–7), grounded and specific
+   - "checks": {{"items": []}}           # validation checks before/after calling tools
 6. For PROCEDURAL slots:
-   - You MUST include "recovery": {{"steps": [...]}} as a general reusable SOP (3–7 steps).
-   - Steps should be tool-agnostic when possible (e.g., "validate required fields", "confirm enums", "pair call_id").
+   - Include "recovery": {{"steps": [...]}} as a reusable SOP (3–7 steps).
+   - Steps should be tool-agnostic where possible, but may mention specific schema tokens when decisive.
+   - If the snapshot provides no specific evidence beyond generic best practice, DO NOT output a procedural slot.
 7. For SEMANTIC slots:
-   - Prefer filling "constraints"/"tool_schema"/"arg_map"/"observations" with compact bullets grounded in the snapshot.
+   - Prefer filling "constraints"/"tool_schema"/"arg_map"/"observations" with compact bullets grounded in snapshot.
 8. For EPISODIC slots:
-   - Keep them rare; must include a novel failure mode and a reusable fix not already covered by procedural playbooks.
-9. `tags` is a list of lowercase keywords (≤6) mixing:
-   - domain: "bfcl","function-calling","multi-turn","tool-use"
-   - memory type: "semantic-evidence","episodic-experience","procedural-experience"
-   - skill: "tool-selection","arg-filling","clarification","validation","error-recovery","distractor-tools"
+   - Keep them rare; only for a novel failure mode or tactic NOT expressible as a generic SOP.
+   - Must include a reusable fix and a clear trigger condition.
 
 Routing hints (implicit, do not add extra fields beyond schema):
-- semantic: store stable constraints, schemas, outputs, invariant mappings.
-- episodic: store rare strategies/failures that generalize but cannot be expressed as a generic SOP.
-- procedural: store step-by-step playbooks (pre-checks, arg filling, calling, interpreting, retrying).
+- semantic: stable constraints, schemas, validated outputs, invariant mappings.
+- procedural: reusable step-by-step playbooks with checks.
+- episodic: rare strategies/failures that generalize but cannot be expressed as a generic SOP.
 
 Output STRICTLY as JSON within the tags below (no extra commentary):
 {{
@@ -334,11 +351,12 @@ Output STRICTLY as JSON within the tags below (no extra commentary):
     {{
       "stage": "argument_construction",
       "topic": "no-assumption required-args protocol",
-      "summary": "Goal: produce a valid tool call without guessing. Preconditions: required fields missing in user text. Steps: ask for the missing fields explicitly; confirm enums; restate inferred args; request confirmation if ambiguous. Checks: verify all required fields present; verify enum values allowed. Result: avoids invalid requests and respects no-assumption rules.",
+      "summary": "Goal: produce a valid tool call without guessing. Preconditions: required fields missing in user text and no defaults stated in schema. Steps: enumerate required fields; ask a single clarification listing only missing fields; restate confirmed args; fill only schema-allowed values; construct the call. Checks: all required fields present; enum literals match schema; no conflicting constraints. Result: avoids invalid requests and respects no-assumption rules.",
       "attachments": {{
         "constraints": {{"items": ["do not guess missing required args; ask targeted clarification"]}},
-        "recovery": {{"steps": ["identify required args from schema", "compare against user-provided info", "ask a single clarification listing missing args", "confirm enum/value constraints", "construct call with only validated fields", "re-validate before sending"]}},
-        "checks": {{"items": ["all required fields present", "enum values allowed", "no conflicting constraints"]}}
+        "tool_schema": {{"items": ["required: field_a, field_b", "enum field_c: [x,y,z]"]}},
+        "recovery": {{"steps": ["extract required fields and enums from schema", "diff against user-provided info", "ask one clarification listing missing fields only", "validate enum/value constraints", "construct call using only confirmed fields", "re-check required fields and conflicts before sending"]}},
+        "checks": {{"items": ["all required fields present", "enum literals match schema", "no conflicting constraints"]}}
       }},
       "tags": ["bfcl","function-calling","procedural-experience","arg-filling","clarification","validation"]
     }}
