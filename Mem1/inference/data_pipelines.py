@@ -1,5 +1,5 @@
 from typing_extensions import Literal
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import requests
 import re
 import random
@@ -58,6 +58,100 @@ def act(response: str):
         return {"type": "answer", "content": answer}
     else:
         return None
+
+def _parse_args_maybe_json(arg_str: str) -> Any:
+    """
+    Try to parse function_call.arguments which might be JSON or semi-JSON.
+    Return dict/obj if possible, otherwise raw string.
+    """
+    s = (arg_str or "").strip()
+
+    # Common cleanup: remove trailing commas, code fences, etc. (lightweight)
+    s = re.sub(r"^```(json)?\s*", "", s)
+    s = re.sub(r"\s*```$", "", s)
+    s = s.strip()
+
+    # Try strict JSON first
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+
+    # If it's something like: query: "xxx" (non-JSON), try regex extraction
+    m = re.search(r'query\s*[:=]\s*"(.*?)"', s, re.DOTALL)
+    if m:
+        return {"query": m.group(1).strip()}
+
+    # Fallback: return raw string
+    return s
+
+def act_from_parsed_messages(
+    messages: List[Dict[str, Any]],
+    *,
+    batch_search,
+    tool_name_to_type: Optional[Dict[str, str]] = None
+) -> Optional[Dict[str, Any]]:
+
+    if tool_name_to_type is None:
+        tool_name_to_type = {
+            "search": "search",
+            "web_search": "search",
+            "batch_search": "search",
+            "answer": "answer",
+            "final": "answer",
+            "finish": "answer",
+        }
+
+    for msg in messages:
+        fc = msg.get("function_call")
+        if not fc:
+            continue
+
+        name = (fc.get("name") or "").strip()
+        args_raw = fc.get("arguments", "")
+        args = _parse_args_maybe_json(args_raw)
+
+        action_type = tool_name_to_type.get(name)
+
+        if action_type == "search":
+            if isinstance(args, dict):
+                query = (args.get("query") or args.get("q") or args.get("text") or "").strip()
+            else:
+                query = str(args).strip()
+
+            if not query:
+                return {"type": "search", "content": "", "query": ""}
+
+            search_results = batch_search(query)
+            return {"type": "search", "content": search_results, "query": query}
+
+        if action_type == "answer":
+            # answer 可能在 args 里，也可能在 content/reasoning_content 里
+            if isinstance(args, dict):
+                answer = (args.get("answer") or args.get("content") or "").strip()
+            else:
+                answer = str(args).strip()
+
+            return {"type": "answer", "content": answer}
+
+        return {"type": "tool", "name": name, "arguments": args}
+
+    blob_parts = []
+    for msg in messages:
+        blob_parts.append(msg.get("content") or "")
+        blob_parts.append(msg.get("reasoning_content") or "")
+    blob = "\n".join(blob_parts)
+
+    if "<search>" in blob and "</search>" in blob:
+        q = re.findall(r"<search>(.*?)</search>", blob, re.DOTALL)[0].strip()
+        search_results = batch_search(q)
+        return {"type": "search", "content": search_results, "query": q}
+
+    if "<answer>" in blob and "</answer>" in blob:
+        a = re.findall(r"<answer>(.*?)</answer>", blob, re.DOTALL)[0].strip()
+        return {"type": "answer", "content": a}
+
+    return None
 
 def extract_internal_state(response: str, tag: str):
                     
@@ -282,8 +376,11 @@ class MemAlphaPipeline(Pipeline):
 
             memory = cur_obs
 
+            self.llm_client.agent.chat(memory, status="memorie") # store the memory into the memory system
+            #self.llm_client.agent.chat(memory, status="rethink") # update the memory
+
             action_dict = act(cur_response)
-            if action_dict["type"] == "search":
+            if action_dict and action_dict["type"] == "search":
                 search_results = action_dict["content"]
                 cur_turn_result = cur_response + search_results
 

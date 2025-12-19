@@ -36,8 +36,8 @@ class MemoryAgent:
     DEFAULT_GPT_MODEL = "gpt-4.1-mini"  # replace with actual model name when available
     DEFAULT_QWEN_MODEL = "Qwen/Qwen3-8B"  # replace with actual model name when available
     MAX_CONVERSATION_TURNS = 5  # Maximum number of conversation turns to include in history
-    THINKING_BUDGET = 4096  # Maximum tokens for thinking process
-    MAX_NEW_TOKENS = 8192  # Maximum tokens for generation
+    THINKING_BUDGET = 1024  # Maximum tokens for thinking process
+    MAX_NEW_TOKENS = 2048  # Maximum tokens for generation
     MAX_MEMORY_ITEMS = 5
 
     def __init__(self, agent_config: dict = None, save_process: bool = False, out_dir: str = None, is_template: bool = False) -> None:
@@ -68,6 +68,7 @@ class MemoryAgent:
         self.is_template = is_template
 
         self.url = agent_config.get('url', 'http://localhost:8014')
+
 
         # Initialize based on model type
         if self.is_qwen and not self.is_template:
@@ -724,22 +725,32 @@ Please only return the query, no other text."""
         max_tokens = max(1, int(max_tokens))
         payload = {
             "model": self.model_name_for_api_calls if hasattr(self, "model_name_for_api_calls") else self.model_name,
-            "prompt": prompt,
+            "messages": [{"role": "user", "content": prompt}],
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "stop": ["</search>", "</answer>"]
         }
         if stop is not None:
             payload["stop"] = stop
 
         r = requests.post(
-            self.url + "/v1/completions",
+            self.url + "/v1/chat/completions",
             json=payload,
             timeout=120,
         )
 
         r.raise_for_status()
         j = r.json()
-        return j["choices"][0]["text"]
+
+        choice = j['choices'][0]
+
+        content = choice["message"]["content"].strip()
+        if choice["stop_reason"] == "</search>":
+            content += "</search>"
+        elif choice["stop_reason"] == "</answer>":
+            content += "</answer>"
+
+        return content
 
 
     def _process_messages_to_text(self, messages, functions):

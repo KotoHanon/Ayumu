@@ -117,6 +117,8 @@ if __name__ == "__main__":
                         help="Data file to use")
     parser.add_argument("--task_type", type=str, default="rag", choices=["rag", "websearch", "webshop"], 
                         help="Task type")
+    parser.add_argument("--signal", type=str, default="test",
+                        help="Signal type")
     args = parser.parse_args()
     
     reconstruction_dicts = []
@@ -145,7 +147,7 @@ if __name__ == "__main__":
                 reconstruction_dicts.append(json.loads(line))
         print(f"Loaded {len(reconstruction_dicts)} reconstruction dicts from {file_path}")
     else:
-        file_path = f'{args.task_type}_train_reconstruction_dicts_{args.model.replace("/", "_")}.jsonl'
+        file_path = f'{args.task_type}_{args.signal}_{args.model.replace("/", "_")}.jsonl'
 
     # Read the test data
     if args.task_type == "rag" or args.task_type == "websearch":

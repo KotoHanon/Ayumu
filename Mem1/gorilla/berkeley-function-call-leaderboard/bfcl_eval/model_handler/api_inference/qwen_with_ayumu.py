@@ -131,7 +131,7 @@ class QwenAgentThinkHandlerWithMemory(OpenAICompletionsHandler):
     def slot_query(self, query_text: str, message: List[dict]):
         slot_query_limit = 3
         if len(query_text) > 0:
-            relevant_slots = self.slot_process.query(query_text=query_text, slots=self.slots, limit=slot_query_limit, use_svd=True, embed_func=self.semantic_memory_system.vector_store._embed)
+            relevant_slots = self.slot_process.query(query_text=query_text, slots=self.slots, limit=slot_query_limit, use_svd=False, embed_func=self.semantic_memory_system.vector_store._embed)
         else:
             relevant_slots = []
         return relevant_slots

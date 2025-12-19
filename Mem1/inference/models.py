@@ -542,9 +542,8 @@ class MemAlphaClient(BaseClient):
         self.agent = MemoryAgent(agent_config=self.agent_config)
         
     def chat_with_memories(self, message: str) -> str:
-        # Retrieve relevant memories
-        response = self.agent.chat(user_msg=message, status="memorie")
-        return response
+        content = self.agent.chat(user_msg=message, status="chat")
+        return content
 
     def generate_response(self, prompt):
         return self.chat_with_memories(prompt)
@@ -558,7 +557,7 @@ class MemAlphaClient(BaseClient):
         return True
     
     def reset(self):
-        pass
+        self.agent = MemoryAgent(agent_config=self.agent_config)
 
 
 class AyumuClient(BaseClient):

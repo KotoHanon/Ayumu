@@ -135,7 +135,7 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
 
     def _inject_memory(self, query_text: str, message: List[dict], threshold: float = 0.4):
         relevant_slots = self.slot_query(query_text=query_text, message=message)        
-        #relevant_semantic_memories, relevant_episodic_memories, relevant_procedural_memories = self.long_term_memory_query(query_text=query_text, message=message, threshold=threshold)
+        relevant_semantic_memories, relevant_episodic_memories, relevant_procedural_memories = self.long_term_memory_query(query_text=query_text, message=message, threshold=threshold)
         
         if len(relevant_slots) > 0:
             print(f"[Info] Size of Retrieved Slots: {len(relevant_slots)}")
