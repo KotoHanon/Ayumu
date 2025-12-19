@@ -82,6 +82,11 @@ class QwenAgentThinkHandlerWithMemory(OpenAICompletionsHandler):
         self._cur_test_id = None
         self._turn_injected_once = False # Only inject memory once per turn, at the beginning.
 
+        self._last_tool_sig: str | None = None
+        self._same_tool_streak: int = 0
+        self._trigger_k: int = 3
+        self._inject_memory_next: bool = False
+
         self.logger_context = setup_logger("context", log_path=os.path.join("log/qwen3-4b-think/ayumu/context/", log_filename) ,level=logging.INFO)
         self.logger_memory = setup_logger("memory", log_path=os.path.join("log/qwen3-4b-think/ayumu/memory/", log_filename) ,level=logging.INFO)
 
@@ -97,6 +102,11 @@ class QwenAgentThinkHandlerWithMemory(OpenAICompletionsHandler):
 
     def _reset_if_new_case(self, test_id: str):
         if test_id != self._cur_test_id:
+            self._cur_test_id = test_id
+            self._last_tool_sig = None
+            self._same_tool_streak = 0
+            self._inject_memory_next = False
+
             # push the lateset turn context to slots
             self._cur_test_id = test_id
             print(f"[Info] Size of slots before reset: {len(self.slots)}")
@@ -145,25 +155,26 @@ class QwenAgentThinkHandlerWithMemory(OpenAICompletionsHandler):
     def _inject_memory(self, query_text: str, message: List[dict], threshold: float = 0.5):
 
         relevant_slots = self.slot_query(query_text=query_text, message=message)
-        # Only inject long-term memory once per turn
+        '''# Only inject long-term memory once per turn
         if self._turn_injected_once == True:
             relevant_semantic_memories, relevant_episodic_memories, relevant_procedural_memories = [], [], []
         else:
             relevant_semantic_memories, relevant_episodic_memories, relevant_procedural_memories = self.long_term_memory_query(query_text=query_text, message=message, threshold=threshold)
-            self._turn_injected_once = True
+            self._turn_injected_once = True'''
+        #relevant_semantic_memories, relevant_episodic_memories, relevant_procedural_memories = self.long_term_memory_query(query_text=query_text, message=message, threshold=threshold)
 
         if len(relevant_slots) > 0:
             print(f"[Info] Size of Retrieved Slots: {len(relevant_slots)}")
             print(f"[Info] 1st Retrieved Slot: {_safe_dump_str(relevant_slots[0])}")
 
         slots_str = "\n".join(f"- {_safe_dump_str(entry[1].summary)}" for entry in relevant_slots)
-        semantic_memories_str = "\n".join(f"- {_safe_dump_str(entry[1].to_dict())}" for entry in relevant_semantic_memories)
-        episodic_memories_str = "\n".join(f"- {_safe_dump_str(entry[1].to_dict())}" for entry in relevant_episodic_memories)
-        procedural_memories_str = "\n".join(f"- {_safe_dump_str(entry[1].to_dict())}" for entry in relevant_procedural_memories)
+        #semantic_memories_str = "\n".join(f"- {_safe_dump_str(entry[1].to_dict())}" for entry in relevant_semantic_memories)
+        #episodic_memories_str = "\n".join(f"- {_safe_dump_str(entry[1].to_dict())}" for entry in relevant_episodic_memories)
+        #procedural_memories_str = "\n".join(f"- {_safe_dump_str(entry[1].to_dict())}" for entry in relevant_procedural_memories)
 
-        self.logger_memory.info(f"Retrieved Slots:\n{slots_str} \nRetrieved Semantic Memories:\n{semantic_memories_str}\nRetrieved Episodic Memories:\n{episodic_memories_str}\nRetrieved Procedural Memories:\n{procedural_memories_str}")
+        #self.logger_memory.info(f"Retrieved Slots:\n{slots_str} \nRetrieved Semantic Memories:\n{semantic_memories_str}\nRetrieved Episodic Memories:\n{episodic_memories_str}\nRetrieved Procedural Memories:\n{procedural_memories_str}")
 
-        mem_msg = {
+        '''mem_msg = {
             "role": "user",
             "content": (
                 f"{self.MEM_TAG}\n"
@@ -177,6 +188,16 @@ class QwenAgentThinkHandlerWithMemory(OpenAICompletionsHandler):
                 f"{episodic_memories_str}\n"
                 "Here are some relevant procedural memories:\n"
                 f"{procedural_memories_str}\n"
+            ),
+        }'''
+        mem_msg = {
+            "role": "user",
+            "content": (
+                f"{self.MEM_TAG}\n"
+                "Context note (optional): the following are retrieved memories. "
+                "They may be irrelevant. Prioritize the current user request.\n\n"
+                "Here are some relevant working slots:\n"
+                f"{slots_str}\n"
             ),
         }
 
@@ -199,12 +220,13 @@ class QwenAgentThinkHandlerWithMemory(OpenAICompletionsHandler):
         message: list[dict] = inference_data["message"]
         tools = inference_data["tools"]
 
-        # 1. remove old memory blocks but keep function call items
-        message = self._strip_old_memory_block_keep_fc_items(message)
-        # 2. extract latest user query text
+        # Extract latest user query text
         query_text = self._extract_latest_user_query_text_keep_fc_items(message)
-        # 3. inject memory
-        message = self._inject_memory(query_text=query_text, message=message)
+        # Inject memory
+        if self._inject_memory_next or (not self._turn_injected_once):
+            message = self._inject_memory(query_text=query_text, message=message, threshold=0.4)
+            self._turn_injected_once = True
+            self._inject_memory_next = False
         
         inference_data["message"] = message
 
@@ -303,10 +325,31 @@ class QwenAgentThinkHandlerWithMemory(OpenAICompletionsHandler):
             )
         memory = str(model_response_data["model_responses"])
         _push_event(self._event_buffer, "ASSISTANT", memory)
+
+        # Get tool signature for tracking
+        sig = self._tool_signature(model_response_data.get("model_responses"))
+
+        if sig is not None:
+            if sig == self._last_tool_sig:
+                self._same_tool_streak += 1
+            else:
+                self._last_tool_sig = sig
+                self._same_tool_streak = 1
+
+            if self._same_tool_streak >= self._trigger_k:
+                self._inject_memory_next = True
+                self._same_tool_streak = 0
+        else:
+            self._last_tool_sig = None
+            self._same_tool_streak = 0
         
         if len(model_response_data.get("tool_call_ids", [])) == 0:
             # No tool calls means that the end of turn
             self._materialize_turn_slots(max_slots=5)
+            # Remove old memory block to avoid accumulation
+            message = inference_data["message"]
+            message = self._strip_old_memory_block_keep_fc_items(message)
+            inference_data["message"] = message
 
         return inference_data
 
@@ -369,6 +412,24 @@ class QwenAgentThinkHandlerWithMemory(OpenAICompletionsHandler):
         self.slots.extend(new_slots)
 
         self._turn_injected_once = False # Reset for next turn
+
+    def _tool_signature(self, model_responses) -> str | None:
+        if not isinstance(model_responses, list):
+            return None
+
+        parts = []
+        for d in model_responses:
+            if not isinstance(d, dict) or len(d) != 1:
+                continue
+            name = next(iter(d.keys()))
+            args_raw = d[name]
+            try:
+                args_obj = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+                args_norm = json.dumps(args_obj, sort_keys=True, ensure_ascii=False)
+            except Exception:
+                args_norm = str(args_raw)
+            parts.append(f"{name}:{args_norm}")
+        return "|".join(parts) if parts else None
 
     async def transfer_slots_to_memories(self, slots: List[WorkingSlot], is_abstract: bool = False):
         if len(slots) == 0:

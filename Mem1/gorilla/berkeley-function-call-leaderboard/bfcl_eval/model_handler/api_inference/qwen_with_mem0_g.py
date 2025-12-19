@@ -113,6 +113,7 @@ class QwenAgentThinkHandlerWithMem0G(OpenAICompletionsHandler):
         }
         self.memory_system = Memory.from_config(self.config)
         self._cur_test_id = None
+        self._event_buffer: List[str] = []
 
         self.logger_context = setup_logger("context", log_path=os.path.join("log/qwen3-4b-think/amem/context/", log_filename) ,level=logging.INFO)
         self.logger_memory = setup_logger("memory", log_path=os.path.join("log/qwen3-4b-think/amem/memory/", log_filename) ,level=logging.INFO)
@@ -131,11 +132,6 @@ class QwenAgentThinkHandlerWithMem0G(OpenAICompletionsHandler):
         if test_id != self._cur_test_id:
             # push the lateset turn context to slots
             self._cur_test_id = test_id
-            self.memory_system = AgenticMemorySystem(
-                model_name='all-MiniLM-L6-v2',  # Embedding model for ChromaDB
-                llm_backend="openai",           # LLM backend (openai/ollama)
-                llm_model=self.model_name       # LLM model name
-            )
 
     def _strip_old_memory_block_keep_fc_items(self, message: list) -> list:
         out = []
@@ -144,7 +140,7 @@ class QwenAgentThinkHandlerWithMem0G(OpenAICompletionsHandler):
                 if m.get("role") == "user" and isinstance(m.get("content"), str) and m["content"].startswith(self.MEM_TAG):
                     continue
             out.append(m)
-        return outs
+        return out
 
     def _inject_memory(self, query_text: str, message: list[dict]):
         # Retrieve relevant memories
