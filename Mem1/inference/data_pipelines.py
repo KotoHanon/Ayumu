@@ -422,8 +422,8 @@ class MemAlphaPipeline(Pipeline):
             iteration_cnt += 1            
 
 
-class AyumuPipeline(Pipeline):
-    def __init__(self, llm_client, inference_type: Literal["normal", "amem", "mem1", "ayumu"], slots, abstract_memories: bool = False):
+class MemPrismPipeline(Pipeline):
+    def __init__(self, llm_client, inference_type: Literal["normal", "amem", "mem1", "memprism"], slots, abstract_memories: bool = False):
         super().__init__(llm_client)
         self.inference_type = inference_type
         self.abstract_memories = abstract_memories
@@ -431,7 +431,7 @@ class AyumuPipeline(Pipeline):
         self.slots = slots
 
     def run_llm_loop(self, prompt, model):
-        use_ayumu = True
+        use_memprism = True
         is_compress_memory = True
         is_collect_slot = True
 

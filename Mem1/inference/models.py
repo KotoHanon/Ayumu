@@ -569,7 +569,7 @@ class MemAlphaClient(BaseClient):
         self.agent = MemoryAgent(agent_config=self.agent_config)
 
 
-class AyumuClient(BaseClient):
+class MemPrismClient(BaseClient):
     def __init__(self, model: str = "gpt-4o-mini", use_local_model: bool = False):
         litellm.drop_params = True
         # Initialize the memory system 🚀

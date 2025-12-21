@@ -329,4 +329,4 @@ class QwenAgentThinkHandlerWithMemAlpha(OpenAICompletionsHandler):
             return
 
         self.agent.chat(user_msg=snapshot_events, status="memorie")
-        print(f"[Info] Size of memory items: {len(self.agent.memory.episodic) + len(self.agent.memory.semantic)}")[]
+        print(f"[Info] Size of memory items: {len(self.agent.memory.episodic) + len(self.agent.memory.semantic)}")

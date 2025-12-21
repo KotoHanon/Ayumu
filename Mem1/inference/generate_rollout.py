@@ -6,11 +6,11 @@ random.seed(42)
 np.random.seed(42)
 
 pd.options.display.max_columns = 100
-from models import LiteLLMClient, AMemClient, VLLMOpenAIClient, MemAlphaClient, AyumuClient, Mem0Client, VLLMClient
+from models import LiteLLMClient, AMemClient, VLLMOpenAIClient, MemAlphaClient, MemPrismClient, Mem0Client, VLLMClient
 import argparse
 import json
 import numpy as np
-from data_pipelines import Mem1Pipeline, Mem0Pipeline, AyumuPipeline, MemAlphaPipeline, model_estimated_match
+from data_pipelines import Mem1Pipeline, Mem0Pipeline, MemPrismPipeline, MemAlphaPipeline, model_estimated_match
 import sys
 try:
     sys.path.append("..")
@@ -89,8 +89,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run LLM loop with OpenAI")
     parser.add_argument("--model", type=str, default="gpt-4o",
                         help="Model to use: 'openai'")
-    parser.add_argument("--use_ayumu", action="store_true", default=False,
-                        help="Use Ayumu client")
+    parser.add_argument("--use_memprism", action="store_true", default=False,
+                        help="Use MemPrism client")
     parser.add_argument("--use_amem", action="store_true", default=False,
                         help="Use Agentic Memory client")
     parser.add_argument("--use_mem0", action="store_true", default=False,
@@ -108,7 +108,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_graph", action="store_true", default=False,
                         help="Use graph memory in Mem0Client")
     parser.add_argument("--abstract_memories", action="store_true", default=False,
-                        help="Use abstract memories (only for ayumu)")
+                        help="Use abstract memories (only for memprism)")
     parser.add_argument("--max_workers", type=int, default=1,
                         help="Maximum number of parallel workers")
     parser.add_argument("--resume_file", type=str, default=None,
@@ -123,8 +123,8 @@ if __name__ == "__main__":
     
     reconstruction_dicts = []
 
-    if args.use_ayumu:
-        inference_type = "ayumu"
+    if args.use_memprism:
+        inference_type = "memprism"
     elif args.use_mem1:
         inference_type = "mem1"
     elif args.use_amem:
@@ -136,7 +136,7 @@ if __name__ == "__main__":
     else:
         inference_type = "normal"
 
-    assert not(not(args.use_ayumu) and args.abstract_memories), "Abstract memories can only be used with Ayumu"
+    assert not(not(args.use_memprism) and args.abstract_memories), "Abstract memories can only be used with MemPrism"
     assert not(not(args.use_mem0) and args.use_graph), "Graph memory can only be used with Mem0Client"
 
     if args.resume_file:
@@ -265,13 +265,13 @@ if __name__ == "__main__":
                     f.write('\n')
             return index
 
-    def process_row_for_ayumu(func_args):
+    def process_row_for_memprism(func_args):
         index, row, client, model = func_args
         client.reset()
         try:
             prompt = row["prompt"][0]["content"]
             slots = []
-            pipeline = AyumuPipeline(client, inference_type=inference_type, slots=slots, abstract_memories=args.abstract_memories)
+            pipeline = MemPrismPipeline(client, inference_type=inference_type, slots=slots, abstract_memories=args.abstract_memories)
             answer, results_dict = pipeline.run_llm_loop(prompt, model=model)
             logger.info(f"Generated answer: {answer}, Golden answer: {row['reward_model']['ground_truth']}")
 
@@ -357,13 +357,13 @@ if __name__ == "__main__":
         for row in tqdm(row_data):
             process_row(row)
 
-    elif args.use_ayumu:
-        llm_client = AyumuClient(args.model, args.use_local_model)
+    elif args.use_memprism:
+        llm_client = MemPrismClient(args.model, args.use_local_model)
         row_data = [(index, row, llm_client, args.model) for index, row in train_data.iterrows()]
         for batch in chunks(row_data, max_workers):
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    list(tqdm(executor.map(process_row_for_ayumu, batch), total=len(batch)))
+                    list(tqdm(executor.map(process_row_for_memprism, batch), total=len(batch)))
                 working_slots = llm_client.slot_process.slot_container.values()
                 num_slots = len(working_slots)
                 # filter and route
