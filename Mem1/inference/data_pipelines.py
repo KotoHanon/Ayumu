@@ -59,99 +59,6 @@ def act(response: str):
     else:
         return None
 
-def _parse_args_maybe_json(arg_str: str) -> Any:
-    """
-    Try to parse function_call.arguments which might be JSON or semi-JSON.
-    Return dict/obj if possible, otherwise raw string.
-    """
-    s = (arg_str or "").strip()
-
-    # Common cleanup: remove trailing commas, code fences, etc. (lightweight)
-    s = re.sub(r"^```(json)?\s*", "", s)
-    s = re.sub(r"\s*```$", "", s)
-    s = s.strip()
-
-    # Try strict JSON first
-    try:
-        return json.loads(s)
-    except Exception:
-        pass
-
-    # If it's something like: query: "xxx" (non-JSON), try regex extraction
-    m = re.search(r'query\s*[:=]\s*"(.*?)"', s, re.DOTALL)
-    if m:
-        return {"query": m.group(1).strip()}
-
-    # Fallback: return raw string
-    return s
-
-def act_from_parsed_messages(
-    messages: List[Dict[str, Any]],
-    *,
-    batch_search,
-    tool_name_to_type: Optional[Dict[str, str]] = None
-) -> Optional[Dict[str, Any]]:
-
-    if tool_name_to_type is None:
-        tool_name_to_type = {
-            "search": "search",
-            "web_search": "search",
-            "batch_search": "search",
-            "answer": "answer",
-            "final": "answer",
-            "finish": "answer",
-        }
-
-    for msg in messages:
-        fc = msg.get("function_call")
-        if not fc:
-            continue
-
-        name = (fc.get("name") or "").strip()
-        args_raw = fc.get("arguments", "")
-        args = _parse_args_maybe_json(args_raw)
-
-        action_type = tool_name_to_type.get(name)
-
-        if action_type == "search":
-            if isinstance(args, dict):
-                query = (args.get("query") or args.get("q") or args.get("text") or "").strip()
-            else:
-                query = str(args).strip()
-
-            if not query:
-                return {"type": "search", "content": "", "query": ""}
-
-            search_results = batch_search(query)
-            return {"type": "search", "content": search_results, "query": query}
-
-        if action_type == "answer":
-            # answer 可能在 args 里，也可能在 content/reasoning_content 里
-            if isinstance(args, dict):
-                answer = (args.get("answer") or args.get("content") or "").strip()
-            else:
-                answer = str(args).strip()
-
-            return {"type": "answer", "content": answer}
-
-        return {"type": "tool", "name": name, "arguments": args}
-
-    blob_parts = []
-    for msg in messages:
-        blob_parts.append(msg.get("content") or "")
-        blob_parts.append(msg.get("reasoning_content") or "")
-    blob = "\n".join(blob_parts)
-
-    if "<search>" in blob and "</search>" in blob:
-        q = re.findall(r"<search>(.*?)</search>", blob, re.DOTALL)[0].strip()
-        search_results = batch_search(q)
-        return {"type": "search", "content": search_results, "query": q}
-
-    if "<answer>" in blob and "</answer>" in blob:
-        a = re.findall(r"<answer>(.*?)</answer>", blob, re.DOTALL)[0].strip()
-        return {"type": "answer", "content": a}
-
-    return None
 
 def extract_internal_state(response: str, tag: str):
                     
@@ -202,16 +109,16 @@ class Pipeline(ABC):
 
 
 class Mem1Pipeline(Pipeline):
-    def __init__(self, llm_client, inference_type: Literal["normal", "amem", "mem1", "mem-alpha"]):
+    def __init__(self, llm_client, inference_type: Literal["normal", "amem", "mem-alpha", "compress"]):
         super().__init__(llm_client)
         self.inference_type = inference_type
         
     def run_llm_loop(self, prompt, model="openai/gpt-4o-mini"):
-        use_mem1 = self.inference_type == "mem1"
-        is_compress_memory = self.inference_type in ["amem", "mem1", "normal"]
+        is_compress_memory = self.inference_type in ["amem", "normal"]
+        is_history_compress = self.inference_type == "compress"
 
         cur_response = ""
-        if use_mem1:
+        if is_history_compress:
             # if mem1 model, we separate the prompt and cur_obs
             # such tht cur_obs only stores the responses
             cur_obs = ""
@@ -221,16 +128,24 @@ class Mem1Pipeline(Pipeline):
         iteration_cnt = 0
         # Initialize results tracking dictionary
         results_dict = {"q": prompt}
+        search_results = ""
 
         while iteration_cnt < MAX_ITERATION:
             # make summary and update the observation
-            if use_mem1:
-                cur_response = self.llm_client.make_completion(prompt, cur_obs, model=model, is_last_turn=iteration_cnt == MAX_ITERATION - 1)
+            if is_history_compress:
+                if "gpt" in model.lower():
+                    cur_response, compress_search_results = self.llm_client.generate_response(prompt, cur_obs, search_results, model=model, history_compress=True)
+                else:
+                    # use local model
+                    cur_response, compress_search_results = self.llm_client.generate_response(prompt, cur_obs, search_results, model=model, is_last_turn=iteration_cnt == MAX_ITERATION - 1, history_compress=True)
             else:
                 cur_response = self.llm_client.generate_response(cur_obs, model=model)
-
             # for the current implementation, use <think></think> for storing the internal state
-            internal_state = extract_internal_state(cur_response, tag="think")
+            internal_state = ""
+            if is_history_compress:
+                internal_state = "signal"
+                internal_state_summary = extract_internal_state(compress_search_results, tag="summary")
+                internal_state_think = extract_internal_state(cur_response, tag="think")
             
             if not is_compress_memory:
                 memory = cur_obs[len(prompt):]
@@ -242,7 +157,11 @@ class Mem1Pipeline(Pipeline):
             
             if internal_state:
                 # Store summary in results dictionary
-                results_dict[f"t{iteration_cnt}"] = internal_state
+                if is_history_compress:
+                    results_dict[f"s{iteration_cnt}"] = internal_state_summary
+                    results_dict[f"t{iteration_cnt}"] = internal_state_think
+                else:
+                    results_dict[f"t{iteration_cnt}"] = internal_state
             else:
                 results_dict[f"t{iteration_cnt}"] = ""
             
@@ -270,7 +189,10 @@ class Mem1Pipeline(Pipeline):
                     results_dict[f"i{iteration_cnt}"] = ""
                 else:
                     results_dict[f"i{iteration_cnt}"] = search_results
-                next_obs = cur_obs + cur_response + search_results
+                if is_history_compress:
+                    next_obs = cur_obs + cur_response + compress_search_results
+                else:
+                    next_obs = cur_obs + cur_response + search_results
             elif action_dict["type"] == "answer":
                 # Store final answer in results dictionary
                 results_dict[f"r{iteration_cnt}"] = cur_response

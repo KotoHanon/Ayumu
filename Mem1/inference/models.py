@@ -50,17 +50,32 @@ class BaseClient(abc.ABC):
 class VLLMOpenAIClient(BaseClient):
     def __init__(self):
         self.url = "http://localhost:8014"
-        self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B")
+        self.tokenizer = AutoTokenizer.from_pretrained("/hpc_stor03/sjtu_home/zijian.wang/MemPrism/.cache/Qwen3-4B")
 
-    def generate_response(self, prompt, model="gpt-4o", temperature=0.01, force_json=False):
+    def generate_response(self, initial_prompt, content, search_results="", model="gpt-4o", temperature=0.01, force_json=False, is_last_turn=False, history_compress=False):
+        stop = []
+        if is_last_turn:
+            stop = ["</answer>"]
+        else:
+            stop = ["</search>", "</answer>"]
+
         try:
+            if history_compress:
+                search_results = self.compress_history_text(search_results, model=model, temperature=temperature)
+            messages = [
+                {"role": "user", "content": [{"type": "text", "text": initial_prompt}]},
+                {"role": "assistant", "content": [{"type": "text", "text": content + search_results}]}
+            ]
             response = requests.post(
                 self.url + "/v1/chat/completions",
                 json={
                     "model": model,
                     "temperature": temperature,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "stop": ["</search>", "</answer>"]
+                    "messages": messages,
+                    "stop": stop,
+                    "top_p": 0.95,
+                    "top_k": -1,
+                    "max_tokens": 1024,
                 }
             )
 
@@ -73,53 +88,35 @@ class VLLMOpenAIClient(BaseClient):
             elif choice["stop_reason"] == "</answer>":
                 content += "</answer>"
 
-            return content
-
+            return content, search_results
         except Exception as e:
             logger.error(f"Error: {str(e)}", exc_info=True)
-            return f"Error: {str(e)}"
+            return f"Error: {str(e)}" 
 
-    def make_completion(self, initial_prompt, content, model="gpt-4o", temperature=0.01, force_json=False, is_last_turn=False):
-        prompt_message = [{"role": "user", "content": initial_prompt}]
-        prompt_message.append({"role": "assistant", "content": content})
-        prompt_message = self.tokenizer.apply_chat_template(prompt_message, tokenize=False)
-
-        # remove the <|im_end> at the end of the prompt
-        prompt_message = prompt_message[:-len("<|im_end|>\n")]
-
-        stop = []
-        if is_last_turn:
-            stop = ["</answer>"]
-        else:
-            stop = ["</search>", "</answer>"]
-
+    def compress_history_text(self, history_text: str, model="gpt-4o-mini", temperature=0.01) -> str:
+        prompt = f"Please compress the following information into a concise summary, retaining all important details:\n\n{history_text}\n\n. Your summary MUST be wrapped with <summary> and </summary> tags. Compress summary:"
         try:
             response = requests.post(
-                self.url + "/v1/completions",
+                self.url + "/v1/chat/completions",
                 json={
                     "model": model,
                     "temperature": temperature,
-                    "prompt": prompt_message,
-                    "stop": stop,
+                    "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
                     "top_p": 0.95,
                     "top_k": -1,
                     "max_tokens": 1024,
+                    "enable_thinking": False,
                 }
             )
 
             choice = response.json()['choices'][0]
 
-            content = choice["text"].strip()
+            content = choice["message"]["content"].strip()
 
-            if choice["stop_reason"] == "</search>":
-                content += "</search>"
-            elif choice["stop_reason"] == "</answer>":
-                content += "</answer>"
-
-            return content
         except Exception as e:
-            logger.error(f"Error: {str(e)}", exc_info=True)
-            return f"Error: {str(e)}" 
+            return f"Error: {str(e)}"
+
+        return content
 
 
 class LiteLLMClient(BaseClient):
@@ -165,7 +162,7 @@ class LiteLLMClient(BaseClient):
         except Exception as e:
             return f"Error: {str(e)}"
     
-    def make_completion(self, prompt, cur_obs, model="openai/gpt-4o-mini", temperature=0.01, force_json=False):
+    def make_completion(self, prompt, cur_obs, search_results="", model="openai/gpt-4o-mini", temperature=0.01, force_json=False, history_compress=False):
         config = {
             "temperature": temperature,
             "top_p": 1,
@@ -183,9 +180,11 @@ class LiteLLMClient(BaseClient):
 
         try: 
             # Format messages properly with content type
+            if history_compress:
+                search_results = self.compress_history_text(search_results, model=model, temperature=temperature)
             messages = [
                 {"role": "user", "content": [{"type": "text", "text": prompt}]},
-                {"role": "assistant", "content": [{"type": "text", "text": cur_obs}]}
+                {"role": "assistant", "content": [{"type": "text", "text": cur_obs + search_results}]}
             ]
             if force_json:
                 response = litellm.completion(
@@ -200,101 +199,26 @@ class LiteLLMClient(BaseClient):
                     messages=messages,
                     **config
                 )
-            return response.choices[0].message.content.strip()
+            return response.choices[0].message.content.strip(), search_results
 
         except Exception as e:
             return f"Error: {str(e)}"
 
-class VLLMClient(BaseClient):
-    def __init__(self, model:str = ".cache/Qwen3-4B"):
-        litellm.drop_params = True
-        assert "OPENAI_API_KEY" in os.environ, "OPENAI_API_KEY is not set"
-        #assert "OPENROUTER_API_KEY" in os.environ, "OPENROUTER_API_KEY is not set"
-        self.url = "http://localhost:8014"
-        self.tokenizer = AutoTokenizer.from_pretrained(".cache/Qwen3-4B")
-
-    def generate_response(self, prompt, model="openai/gpt-4o-mini", temperature=0.01, force_json=False):
-        config = {
-            "temperature": temperature,
-            "top_p": 0.95,
-            "provider": {
-                "sort": "throughput"
-            },
-        }
-
-        if model.startswith("openai/"):
-            # drop provider
-            config.pop("provider")
-
-        '''if not model.startswith("openrouter/") and not model.startswith("openai/"):
-            model = "openrouter/" + model'''
-
-        try: 
-            # Use local vLLM server for inference
-            messages = [{"role": "user", "content": prompt}]
-            response = requests.post(
-                self.url + "/v1/chat/completions",
-                json={
-                    "model": model,
-                    "temperature": temperature,
-                    "messages": messages,
-                    "stop": ["</search>", "</answer>"]
-                }
+    def compress_history_text(self, history_text: str, model="gpt-4o-mini", temperature=0.01) -> str:
+        prompt = f"Please compress the following information into a concise summary, retaining all important details:\n\n{history_text}\n\n. Your summary MUST be wrapped with <summary> and </summary> tags. Compress summary:"
+        try:
+            response = litellm.completion(
+                model=model,
+                messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+                temperature=temperature,
+                top_p=0.95,
+                provider={"sort": "throughput"}
             )
-
-            choice = response.json()['choices'][0]
-
-            content = choice["message"]["content"].strip()
-
-            if choice["stop_reason"] == "</search>":
-                content += "</search>"
-            elif choice["stop_reason"] == "</answer>":
-                content += "</answer>"
-
-            return content
-
-        except Exception as e:
-            return f"Error: {str(e)}"
-    
-    def make_completion(self, prompt, cur_obs, model="openai/gpt-4o-mini", temperature=0.01, force_json=False):
-        config = {
-            "temperature": temperature,
-            "top_p": 1,
-            "provider": {
-                "sort": "throughput"
-            },
-        }
-
-        if model.startswith("openai/"):
-            # drop provider
-            config.pop("provider")
-
-        '''if not model.startswith("openrouter/") and not model.startswith("openai/"):
-            model = "openrouter/" + model'''
-
-        try: 
-            # Format messages properly with content type
-            messages = [
-                {"role": "user", "content": [{"type": "text", "text": prompt}]},
-                {"role": "assistant", "content": [{"type": "text", "text": cur_obs}]}
-            ]
-            if force_json:
-                response = litellm.completion(
-                    model=model,
-                    response_format={"type": "json_object"},
-                    messages=messages,
-                    **config
-                )
-            else:
-                response = litellm.completion(
-                    model=model,
-                    messages=messages,
-                    **config
-                )
             return response.choices[0].message.content.strip()
-
         except Exception as e:
             return f"Error: {str(e)}"
+
+        return response
 
 
 class AMemClient(BaseClient):

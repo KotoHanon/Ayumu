@@ -6,7 +6,7 @@ random.seed(42)
 np.random.seed(42)
 
 pd.options.display.max_columns = 100
-from models import LiteLLMClient, AMemClient, VLLMOpenAIClient, MemAlphaClient, MemPrismClient, Mem0Client, VLLMClient
+from models import LiteLLMClient, AMemClient, VLLMOpenAIClient, MemAlphaClient, MemPrismClient, Mem0Client
 import argparse
 import json
 import numpy as np
@@ -101,12 +101,12 @@ if __name__ == "__main__":
                         help="Use LiteLLM client")
     parser.add_argument("--use_memalpha", action="store_true", default=False,
                         help="Use MemAlpha client")
-    parser.add_argument("--use_vllm", action="store_true", default=False,
-                        help="Use VLLM OpenAI client")
     parser.add_argument("--use_local_model", action="store_true", default=False,
                         help="Use VLLM OpenAI client")
     parser.add_argument("--use_graph", action="store_true", default=False,
                         help="Use graph memory in Mem0Client")
+    parser.add_argument("--use_history_compress", action="store_true", default=False,
+                        help="Use history compression")
     parser.add_argument("--abstract_memories", action="store_true", default=False,
                         help="Use abstract memories (only for memprism)")
     parser.add_argument("--max_workers", type=int, default=1,
@@ -133,8 +133,15 @@ if __name__ == "__main__":
         inference_type = "mem0"
     elif args.use_memalpha:
         inference_type = "mem-alpha"
+    elif args.use_history_compress:
+        inference_type = "compress"
     else:
         inference_type = "normal"
+
+    if "qwen" in args.model.lower():
+        use_local_model = True
+    else:
+        use_local_model = False
 
     assert not(not(args.use_memprism) and args.abstract_memories), "Abstract memories can only be used with MemPrism"
     assert not(not(args.use_mem0) and args.use_graph), "Graph memory can only be used with Mem0Client"
@@ -191,7 +198,7 @@ if __name__ == "__main__":
                 pipeline = MemAlphaPipeline(client)
             else:
                 pipeline = Mem1Pipeline(client, inference_type=inference_type)
-            answer, results_dict = pipeline.run_llm_loop(prompt)
+            answer, results_dict = pipeline.run_llm_loop(prompt, model=model)
             logger.info(f"Generated answer: {answer}, Golden answer: {row['reward_model']['ground_truth']}")
 
             if "multi" in args.data_file:
@@ -346,19 +353,19 @@ if __name__ == "__main__":
     if args.use_amem:
         # we must run in a single thread
         # otherwise chromadb will clash
-        llm_client = AMemClient(args.use_local_model)
+        llm_client = AMemClient(use_local_model)
         row_data = [(index, row, llm_client, args.model) for index, row in train_data.iterrows()]
         for row in tqdm(row_data):
             process_row(row)
 
     elif args.use_memalpha:
-        llm_client = MemAlphaClient(args.model, args.use_local_model)
+        llm_client = MemAlphaClient(args.model, use_local_model)
         row_data = [(index, row, llm_client, args.model) for index, row in train_data.iterrows()]
         for row in tqdm(row_data):
             process_row(row)
 
     elif args.use_memprism:
-        llm_client = MemPrismClient(args.model, args.use_local_model)
+        llm_client = MemPrismClient(args.model, use_local_model)
         row_data = [(index, row, llm_client, args.model) for index, row in train_data.iterrows()]
         for batch in chunks(row_data, max_workers):
             try:
@@ -395,12 +402,10 @@ if __name__ == "__main__":
             print(f"[Info] Episodic memory size: {llm_client.episodic_memory_system.size}")
             
     else:
-        if args.use_mem1:
+        if args.use_mem1 or (args.use_history_compress and use_local_model):
             llm_client = VLLMOpenAIClient()
         elif args.use_mem0:
-            llm_client = Mem0Client(args.use_local_model, use_graph=args.use_graph)
-        elif args.use_vllm:
-            llm_client = VLLMClient()
+            llm_client = Mem0Client(use_local_model, use_graph=args.use_graph)
         else:
             llm_client = LiteLLMClient()
         # otherwise we can use parallel workers
