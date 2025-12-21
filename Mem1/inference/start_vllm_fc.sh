@@ -9,7 +9,7 @@ export MODEL_PATH=".cache/Mem1-7B"  # use the official MEM1 model
 HOST="0.0.0.0"
 PORT="8015"
 TENSOR_PARALLEL_SIZE=1 
-MAX_MODEL_LEN=32768
+MAX_MODEL_LEN=8192
 GPU_MEMORY_UTILIZATION=0.6
 # Start vLLM server
 CUDA_VISIBLE_DEVICES=4 python -m vllm.entrypoints.openai.api_server \
@@ -20,4 +20,3 @@ CUDA_VISIBLE_DEVICES=4 python -m vllm.entrypoints.openai.api_server \
   --tensor-parallel-size $TENSOR_PARALLEL_SIZE \
   --gpu-memory-utilization $GPU_MEMORY_UTILIZATION \
   --max-model-len $MAX_MODEL_LEN
-

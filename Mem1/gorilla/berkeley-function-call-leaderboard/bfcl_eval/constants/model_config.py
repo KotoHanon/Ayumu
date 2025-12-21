@@ -24,7 +24,7 @@ from bfcl_eval.model_handler.api_inference.openai_completion import (
     OpenAICompletionsHandler,
 )
 from bfcl_eval.model_handler.api_inference.openai_response import OpenAIResponsesHandler
-from bfcl_eval.model_handler.api_inference.openai_response_with_ayumu import OpenAIResponsesHandlerWithMemory
+from bfcl_eval.model_handler.api_inference.openai_response_with_memprism import OpenAIResponsesHandlerWithMemory
 from bfcl_eval.model_handler.api_inference.openai_response_with_amem import OpenAIResponsesHandlerWithAMem
 from bfcl_eval.model_handler.api_inference.openai_response_with_mem0 import OpenAIResponsesHandlerWithMem0
 from bfcl_eval.model_handler.api_inference.openai_response_with_mem0_g import OpenAIResponsesHandlerWithMem0G
@@ -33,7 +33,7 @@ from bfcl_eval.model_handler.api_inference.qwen import (
     QwenAgentThinkHandler,
     QwenAPIHandler,
 )
-from bfcl_eval.model_handler.api_inference.qwen_with_ayumu import QwenAgentThinkHandlerWithMemory
+from bfcl_eval.model_handler.api_inference.qwen_with_memprism import QwenAgentThinkHandlerWithMemory
 from bfcl_eval.model_handler.api_inference.qwen_with_amem import QwenAgentThinkHandlerWithAMem
 from bfcl_eval.model_handler.api_inference.qwen_with_mem0 import QwenAgentThinkHandlerWithMem0
 from bfcl_eval.model_handler.api_inference.qwen_with_mem0_g import QwenAgentThinkHandlerWithMem0G
@@ -352,7 +352,7 @@ api_inference_model_map = {
         is_fc_model=False,
         underscore_to_dot=False,
     ),
-    "gpt-4o-mini-ayumu-2024-07-18": ModelConfig(
+    "gpt-4o-mini-memprism-2024-07-18": ModelConfig(
         model_name="gpt-4o-mini-2024-07-18",
         display_name="GPT-4o-mini-2024-07-18 (Prompt)",
         url="https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/",
@@ -376,7 +376,7 @@ api_inference_model_map = {
         is_fc_model=True,
         underscore_to_dot=True,
     ),
-    "gpt-4o-mini-ayumu-2024-07-18-FC": ModelConfig(
+    "gpt-4o-mini-memprism-2024-07-18-FC": ModelConfig(
         model_name="gpt-4o-mini-2024-07-18",
         display_name="GPT-4o-mini-2024-07-18 (FC)",
         url="https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/",
@@ -2198,7 +2198,7 @@ third_party_inference_model_map = {
         is_fc_model=True,
         underscore_to_dot=True,
     ),
-    "qwen3-4b-think-FC-ayumu": ModelConfig(
+    "qwen3-4b-think-FC-memprism": ModelConfig(
         model_name="qwen3-4b-think-FC",
         display_name="Qwen3-4B-Think (FC)",
         url="https://huggingface.co/Qwen/Qwen3-4B",
