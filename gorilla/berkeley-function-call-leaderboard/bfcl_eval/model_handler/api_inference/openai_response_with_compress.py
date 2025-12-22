@@ -17,6 +17,8 @@ from bfcl_eval.model_handler.utils import (
 from openai import OpenAI, RateLimitError
 from openai.types.responses import Response
 
+from memory.memory_system.utils import _safe_dump_str
+
 
 class OpenAIResponsesHandlerWithCompress(BaseHandler):
     def __init__(
@@ -189,6 +191,11 @@ class OpenAIResponsesHandlerWithCompress(BaseHandler):
         inference_data["message"].extend(
             model_response_data["model_responses_message_for_chat_history"]
         )
+
+        if len(model_response_data.get("tool_call_ids", [])) == 0:
+            # compress history message at the end of the turn only if there is no tool call
+            self._compress_history_message(inference_data)
+
         return inference_data
 
     def _add_execution_results_FC(
@@ -305,3 +312,44 @@ class OpenAIResponsesHandlerWithCompress(BaseHandler):
         )
 
         return inference_data
+
+    def _compress_history_message(self, inference_data: dict) -> dict:
+        message = inference_data["message"]
+        prompt = f"""You are a history summarizer for a task-oriented tool-using agent (BFCL setting).
+
+Input: a full conversation history containing messages from roles: system, user, assistant, and tool (tool results).
+Output: ONE single plain-English string (no JSON, no Markdown) that will be inserted as an assistant message and used as the compressed history for the next turn.
+
+Hard rules:
+- Do NOT invent or assume missing information. If something is unknown, explicitly say "UNKNOWN".
+- Preserve anything needed to correctly continue the task and to form valid tool calls.
+- If any future tool call would require required arguments that are not explicitly provided in history, you MUST state which arguments are missing and that the agent should ask the user for them (do not guess).
+- Keep only decision-critical content; drop greetings, chit-chat, and repeated phrasing.
+- Tool results can be long: keep only reusable key fields (IDs, numbers, paths, final verdicts) and any error messages/causes.
+- Keep it concise: target ~80–180 words.
+
+Return the summary in EXACTLY this template (still as a single string):
+
+COMPRESSED_HISTORY:
+[GOAL] <the user’s current objective in one sentence>
+[STATE] Done: <what has been completed> | Now: <current situation/progress>
+[FACTS] <key facts/variables/choices confirmed so far; include timestamps if present>
+[TOOLS] <most recent tool calls and key outcomes/errors; include IDs/paths/numbers>
+[CONSTRAINTS] <non-negotiable rules from system/user/tool schemas; “no guessing”, formats, limits>
+[MISSING] <required info not present; list exact missing args/questions; or “None”>
+[NEXT] <the next best action; include specific clarification questions if needed>
+
+Here is the conversation history:
+{_safe_dump_str(message)}
+"""
+
+        compression_response, _ = self.generate_with_backoff(
+            input=[{"role": "user", "content": prompt}],
+            model=self.model_name,
+            store=False,
+            temperature=self.temperature,
+        )
+        # Replace the assistant message with the compressed history
+        inference_data["message"] = [{"role": "assistant", "content": compression_response.output_text}]
+
+

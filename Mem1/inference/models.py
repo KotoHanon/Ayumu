@@ -94,6 +94,9 @@ class VLLMOpenAIClient(BaseClient):
             return f"Error: {str(e)}" 
 
     def compress_history_text(self, history_text: str, model="gpt-4o-mini", temperature=0.01) -> str:
+        if len(history_text.strip()) == 0:
+            return ""
+        
         prompt = f"Please compress the following information into a concise summary, retaining all important details:\n\n{history_text}\n\n. Your summary MUST be wrapped with <summary> and </summary> tags. Compress summary:"
         try:
             response = requests.post(
@@ -236,7 +239,7 @@ class AMemClient(BaseClient):
         self.use_local_model = use_local_model
         if self.use_local_model:
             self.url = "http://localhost:8014"
-            self.tokenizer = AutoTokenizer.from_pretrained(".cache/Qwen3-4B")
+            self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B")
         else:
             assert "OPENAI_API_KEY" in os.environ, "OPENAI_API_KEY is not set"
             #assert "OPENROUTER_API_KEY" in os.environ, "OPENROUTER_API_KEY is not set"
@@ -364,7 +367,7 @@ class Mem0Client(BaseClient):
         self.use_local_model = use_local_model
         if self.use_local_model:
             self.url = "http://localhost:8014"
-            self.tokenizer = AutoTokenizer.from_pretrained(".cache/Qwen3-4B")
+            self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B")
             vllm_config = {
                 "provider": "vllm",
                 "config": {
@@ -508,7 +511,7 @@ class MemPrismClient(BaseClient):
         self.use_local_model = use_local_model
         if self.use_local_model:
             self.url = "http://localhost:8014"
-            self.tokenizer = AutoTokenizer.from_pretrained(".cache/Qwen3-4B")
+            self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B")
             self.slot_process = SlotProcess(llm_name=model, llm_backend="vllm")
             self.semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_name=model, llm_backend="vllm")
             self.episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_name=model, llm_backend="vllm")
@@ -669,7 +672,7 @@ class MemPrismClient(BaseClient):
             if i['memory_type'] == 'semantic':
                 semantic_records.append(self.semantic_memory_system.instantiate_sem_record(**i['input']))
             elif i['memory_type'] == 'episodic':
-                episodic_records.append(self.semantic_memory_system.instantiate_epi_record(**i['input']))
+                episodic_records.append(self.episodic_memory_system.instantiate_epi_record(**i['input']))
         
         if is_abstract and len(episodic_records) > 0:
             await self.abstract_episodic_records_to_semantic_record(episodic_records)

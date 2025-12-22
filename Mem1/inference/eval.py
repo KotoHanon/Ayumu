@@ -50,8 +50,8 @@ def compute_peak_token_non_compression(data) -> float:
         return None
     solution_str = ""
     for i in range(10):
-        if f"t{i}" in data:
-            solution_str += data[f"t{i}"]
+        '''if f"t{i}" in data:
+            solution_str += data[f"t{i}"]'''
         if f"r{i}" in data:
             solution_str += data[f"r{i}"]
         if f"i{i}" in data:
@@ -73,9 +73,9 @@ def compute_peak_token_compression(data) -> float:
     # prompt_len = len(encoding.encode(data["q"]))
     for i in range(10):
         new_solution_str = ""
-        if f"t{i}" in data:
+        '''if f"t{i}" in data:
             solution_str += data[f"t{i}"]
-            new_solution_str += data[f"t{i}"]
+            new_solution_str += data[f"t{i}"]'''
         if f"r{i}" in data:
             solution_str += data[f"r{i}"]
             new_solution_str += data[f"r{i}"]
@@ -101,12 +101,12 @@ def compute_dependency_compression(data) -> float:
     solution_str = ""
     for i in range(10):
         new_solution_str = ""
-        if f"t{i}" in data:
+        '''if f"t{i}" in data:
             lt = len(encoding.encode(data[f"t{i}"]))
             dependency_count += (len(encoding.encode(solution_str)) + lt // 2) * lt
             total_length += lt
             solution_str += data[f"t{i}"]
-            new_solution_str += data[f"t{i}"]
+            new_solution_str += data[f"t{i}"]'''
         if f"r{i}" in data:
             lr = len(encoding.encode(data[f"r{i}"]))
             dependency_count += (len(encoding.encode(solution_str)) + lr // 2) * lr
@@ -134,11 +134,11 @@ def compute_compression_ratio(data) -> float:
     length = 0
     for i in range(10):
         cur_solution_str = ""
-        if f"t{i}" in data:
+        '''if f"t{i}" in data:
             lt = len(encoding.encode(data[f"t{i}"]))
             total_length += lt
             cur_solution_str += data[f"t{i}"]
-            solution_str += data[f"t{i}"]
+            solution_str += data[f"t{i}"]'''
         if f"r{i}" in data:
             lr = len(encoding.encode(data[f"r{i}"]))
             total_length += lr
@@ -166,11 +166,11 @@ def compute_dependency_non_compression(data) -> float:
     total_length = 0
     solution_str = ""
     for i in range(10):
-        if f"t{i}" in data:
+        '''if f"t{i}" in data:
             lt = len(encoding.encode(data[f"t{i}"]))
             dependency_count += (len(encoding.encode(solution_str)) + lt // 2) * lt
             total_length += lt
-            solution_str += data[f"t{i}"]
+            solution_str += data[f"t{i}"]'''
         if f"r{i}" in data:
             lr = len(encoding.encode(data[f"r{i}"]))
             dependency_count += (len(encoding.encode(solution_str)) + lr // 2) * lr
@@ -289,8 +289,8 @@ if __name__ == "__main__":
         solution_str = ""
 
         for i in range(10):
-            if f"t{i}" in data:
-                solution_str += data[f"t{i}"]
+            '''if f"t{i}" in data:
+                solution_str += data[f"t{i}"]'''
             if f"r{i}" in data:
                 solution_str += data[f"r{i}"]
             if f"i{i}" in data:

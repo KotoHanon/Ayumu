@@ -28,6 +28,7 @@ model_zoo["film-7b"]="In2Training/FILM-7B"
 model_zoo["phi-3-medium-128k-instruct"]="microsoft/Phi-3-medium-128k-instruct"
 model_zoo["phi-3.5-mini-instruct"]="microsoft/Phi-3.5-mini-instruct"
 model_zoo["phi-4"]="microsoft/phi-4"
+model_zoo["qwen3-4b"]="qwen3-4b-think-FC"
 model=${model_zoo["$model_alias"]}
 
 if [[ $model_alias == "gpt-4o" || $model_alias == "gpt-4o-mini" ]]; then
@@ -37,7 +38,7 @@ if [[ $model_alias == "gpt-4o" || $model_alias == "gpt-4o-mini" ]]; then
     openai_org_flag="--openai_organization YOUR_ORGANIZATION"   # uclanlp
 else
     # will call an openai server emulator served by e.g., vllm locally
-    openai_base_url_flag="--openai_base_url http://localhost:8001/v1"
+    openai_base_url_flag="--openai_base_url http://localhost:8014/v1"
     openai_key="EMPTY"
     openai_org_flag=""
 fi

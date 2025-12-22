@@ -324,13 +324,14 @@ def main(args):
         'mistral-7b-instruct-v0.2': 32000,
         'mistral-7b-instruct-v0.3': 32000,
         'In2Training/FILM-7B': 32000,
+        'qwen3-4b-think-FC': 32000,
     }
     model_max_length = model2maxlength[args.model_name]
     if 'gpt-4' in args.model_name.lower()  or 'gpt-3.5' in args.model_name.lower():
         tokenizer = tiktoken.get_encoding('o200k_base')
         tokenizer_backend = 'openai'
     else:
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+        tokenizer = AutoTokenizer.from_pretrained("/hpc_stor03/sjtu_home/zijian.wang/MemPrism/.cache/Qwen3-4B")
         tokenizer_backend = 'huggingface'
 
     total_prompt_tokens, total_completion_tokens = 0, 0

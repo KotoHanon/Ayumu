@@ -9,7 +9,7 @@ export MODEL_PATH=".cache/Qwen3-4B"  # use the official MEM1 model
 HOST="0.0.0.0"
 PORT="8014"
 TENSOR_PARALLEL_SIZE=1  # Using all 4 GPUs for tensor parallelism
-MAX_MODEL_LEN=8192
+MAX_MODEL_LEN=32768
 GPU_MEMORY_UTILIZATION=0.6
 # Start vLLM server
 CUDA_VISIBLE_DEVICES=3 python -m vllm.entrypoints.openai.api_server \
