@@ -176,7 +176,120 @@ class Schema:
         },
         "required": ["slots"]
         }
-    
+
+        self.CHAT_TASK_SLOT_SCHEMA = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "slots": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": max_slots,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "stage": {
+                                "type": "string",
+                                "enum": [
+                                    "user_event",
+                                    "user_preference",
+                                    "user_relationship",
+                                    "user_timeline",
+                                    "meta"
+                                ]
+                            },
+                            "topic": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 80,
+                                "pattern": "^[a-z0-9]+(?: [a-z0-9]+){2,5}$"
+                                # 3–6 words slug, lowercase, space-separated
+                            },
+                            "summary": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 500
+                                # ≤80 words ≈ 500 characters
+                            },
+                            "attachments": {
+                                "type": "object",  # REQUIRED, not nullable for CHAT
+                                "additionalProperties": False,
+                                "properties": {
+                                    "session_id": {
+                                        "type": "string",
+                                        "minLength": 10,
+                                        "maxLength": 50
+                                        "required": ["items"]
+                                    },
+                                    "dates": {
+                                        "type": "object",
+                                        "additionalProperties": False,
+                                        "properties": {
+                                            "items": {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "maxItems": 20
+                                            }
+                                        },
+                                        "required": ["items"]
+                                    },
+                                    "entities": {
+                                        "type": "object",
+                                        "additionalProperties": False,
+                                        "properties": {
+                                            "items": {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "maxItems": 30
+                                            }
+                                        },
+                                        "required": ["items"]
+                                    },
+                                    "facts": {
+                                        "type": "object",
+                                        "additionalProperties": False,
+                                        "properties": {
+                                            "items": {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "maxItems": 30
+                                            }
+                                        },
+                                        "required": ["items"]
+                                    },
+                                    "temporal_cues": {
+                                        "type": "object",
+                                        "additionalProperties": False,
+                                        "properties": {
+                                            "items": {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "maxItems": 20
+                                            }
+                                        },
+                                        "required": ["items"]
+                                    }
+                                },
+                                "required": ["session_ids", "dates", "entities", "facts", "temporal_cues"]
+                            },
+                            "tags": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 5,
+                                "items": {
+                                    "type": "string",
+                                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                                }
+                            }
+                        },
+                        "required": ["stage", "topic", "summary", "attachments", "tags"]
+                    }
+                }
+            },
+            "required": ["slots"]
+        }
+
         self.EXPERIMENT_TASK_SLOT_SCHEMA = {
         "type": "object",
         "additionalProperties": False,

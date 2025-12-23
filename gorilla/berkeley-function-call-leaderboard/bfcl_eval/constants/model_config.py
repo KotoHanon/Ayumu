@@ -39,6 +39,7 @@ from bfcl_eval.model_handler.api_inference.qwen_with_amem import QwenAgentThinkH
 from bfcl_eval.model_handler.api_inference.qwen_with_mem0 import QwenAgentThinkHandlerWithMem0
 from bfcl_eval.model_handler.api_inference.qwen_with_mem0_g import QwenAgentThinkHandlerWithMem0G
 from bfcl_eval.model_handler.api_inference.qwen_with_memalpha import QwenAgentThinkHandlerWithMemAlpha
+from bfcl_eval.model_handler.api_inference.qwen_with_compress import QwenAgentThinkHandlerWithCompress
 from bfcl_eval.model_handler.api_inference.nanbeige import NanbeigeAPIHandler
 from bfcl_eval.model_handler.api_inference.writer import WriterHandler
 from bfcl_eval.model_handler.local_inference.arch import ArchHandler
@@ -2266,6 +2267,18 @@ third_party_inference_model_map = {
         org="Qwen",
         license="apache-2.0",
         model_handler=QwenAgentThinkHandlerWithMemAlpha,
+        input_price=None,
+        output_price=None,
+        is_fc_model=True,
+        underscore_to_dot=True,
+    ),
+    "qwen3-4b-think-FC-compress": ModelConfig(
+        model_name="qwen3-4b-think-FC",
+        display_name="Qwen3-4B-Think (FC)",
+        url="https://huggingface.co/Qwen/Qwen3-4B",
+        org="Qwen",
+        license="apache-2.0",
+        model_handler=QwenAgentThinkHandlerWithCompress,
         input_price=None,
         output_price=None,
         is_fc_model=True,

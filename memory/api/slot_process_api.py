@@ -24,6 +24,7 @@ from memory.memory_system.user_prompt import (
     TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT,
     TRANSFER_QA_AGENT_CONTEXT_TO_WORKING_SLOT_PROMPT,
     TRANSFER_FC_AGENT_CONTEXT_TO_WORKING_SLOT_PROMPT,
+    TRANSFER_CHAT_AGENT_CONTEXT_TO_WORKING_SLOT_PROMPT,
 )
 from textwrap import dedent
 from memory.memory_system import WorkingSlot, OpenAIClient, LLMClient
@@ -97,7 +98,7 @@ class SlotProcess:
 
         return scored_slots[:k]
         
-    async def filter_and_route_slots(self, slots: List[WorkingSlot] = None, task: Literal["experiment", "qa", "fc"] = "qa") -> List[Dict[str, WorkingSlot]]:
+    async def filter_and_route_slots(self, slots: List[WorkingSlot] = None, task: Literal["experiment", "qa", "fc", "chat"] = "qa") -> List[Dict[str, WorkingSlot]]:
         self.filtered_slot_container = []
         self.routed_slot_container = []
 
@@ -123,7 +124,7 @@ class SlotProcess:
         
         return self.routed_slot_container
 
-    def multi_thread_filter_and_route_slot(self, slot: WorkingSlot, task: Literal["experiment", "qa", "fc"] = "qa"):
+    def multi_thread_filter_and_route_slot(self, slot: WorkingSlot, task: Literal["experiment", "qa", "fc", "chat"] = "qa"):
         check_result = asyncio.run(slot.slot_filter(self.llm_model, task=task))
         if check_result == True:
             try:
@@ -303,6 +304,63 @@ class SlotProcess:
 
             working_slots.append(slot)
             
+        return working_slots
+
+    async def transfer_chat_agent_context_to_working_slots(self, context: str, max_slots: int = 50) -> List[WorkingSlot]:
+        system_prompt = (
+            "You are an expert tool-using agent archivist. "
+            "Transform BFCL-style multi-turn tool-calling trajectories into reusable memory slots. "
+            "You must distinguish Semantic evidence, Episodic experience, and Procedural experience. "
+            "Output strictly as JSON."
+        )
+
+        user_prompt = TRANSFER_CHAT_AGENT_CONTEXT_TO_WORKING_SLOT_PROMPT.format(
+            max_slots=max_slots,
+            snapshot=context,
+        )
+
+        schema = Schema(max_slots=max_slots)
+        chat_task_slot_schema = schema.CHAT_TASK_SLOT_SCHEMA
+
+        response = await self.llm_model.complete(
+            system_prompt=system_prompt, 
+            user_prompt=user_prompt, 
+            json_schema=chat_task_slot_schema, 
+            schema_name="CHAT_TASK_SLOT_SCHEMA",
+            strict=False,
+            max_tokens=4096)
+        data = json.loads(response)
+        if not data:
+            return []
+        
+        slots_data = data.get("slots", [])
+        if not isinstance(slots_data, list):
+            raise ValueError("`slots` must be a list.")
+        
+        working_slots: List[WorkingSlot] = []
+        allowed_keys = {"stage", "topic", "summary", "attachments", "tags"}
+
+        for slot_dict in slots_data[:max_slots]:
+            if not isinstance(slot_dict, dict):
+                continue
+            _hard_validate_slot_keys(slot_dict, allowed_keys=allowed_keys)
+
+            stage = str(slot_dict.get("stage", "")).strip()
+            topic = str(slot_dict.get("topic", "")).strip()
+            summary = str(slot_dict.get("summary", "")).strip()
+            attachments = slot_dict.get("attachments") or {}
+            tags = slot_dict.get("tags") or []
+
+            slot = WorkingSlot(
+                stage=stage,
+                topic=topic,
+                summary=summary,
+                attachments=attachments,
+                tags=list(tags),
+            )
+
+            working_slots.append(slot)
+            
         return working_slots        
 
     async def transfer_experiment_agent_context_to_working_slots(self, context, state: str, max_slots: int = 50) -> List[WorkingSlot]:
@@ -421,6 +479,7 @@ class SlotProcess:
             return
 
         self.memory_dict.append({"memory_type": memory_type, "input": input_dict})
+
 
     async def transfer_slot_to_semantic_record(self, slot: WorkingSlot) -> Dict[str, Any]:
         system_prompt = (

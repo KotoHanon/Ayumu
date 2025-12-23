@@ -364,6 +364,85 @@ Output STRICTLY as JSON within the tags below (no extra commentary):
 }}
 """)
 
+TRANSFER_CHAT_AGENT_CONTEXT_TO_WORKING_SLOT_PROMPT = dedent("""
+Convert the Chat Agent workflow context into at most {max_slots} WorkingSlot entries ready for filtering/routing.
+
+This prompt is designed for LongMemEval-style multi-session chat history, where users discuss life events, preferences, and activities across many sessions. The goal is to store **reusable, personal-context memories** that help answer future questions about the user's history.
+
+A slot SHOULD be created if and only if it contains:
+  (A) Semantic evidence: stable, factual user information (preferences, events, dates, relationships, purchases, activities) that can later support answering temporal or factual questions.
+  OR
+  (B) Episodic experience: chronological user events with timestamps or relative timing that enables temporal reasoning (e.g., "first", "before", "after", "how many days").
+
+Ignore:
+- Generic assistant advice or explanations (e.g., "Here are some tips for...").
+- Ephemeral chatter without concrete user facts.
+- Pure assistant responses with no user-specific information.
+
+Context Snapshot (may include multiple sessions with Session IDs and dates):
+<chat-context>
+{snapshot}
+</chat-context>
+
+Authoring rules:
+1. Each slot MUST capture a single user fact, event, or preference.
+2. `stage` MUST be one of:
+   - user_event           # concrete events: purchases, trips, appointments, activities, services
+   - user_preference      # stated preferences, habits, routines, opinions
+   - user_relationship    # people, pets, organizations the user mentions
+   - user_timeline        # temporal facts: dates, durations, sequences of events
+   - meta                 # cross-session patterns or agent insights
+3. `summary` MUST be ≤80 words, self-contained, and follow:
+   - For events: What → When → Details (e.g., "User got car serviced on March 15th.")
+   - For preferences: Topic → Preference → Context
+   - For timeline: Event A → Event B → Temporal relation
+4. `topic` is a 3–6 word slug referencing the subject (lowercase, space-separated),
+   e.g. "car first service date", "gps system replacement", "gas station rewards program".
+5. `attachments` is **REQUIRED** and MUST include:
+   - "session_ids": {{"items": str}}   # **MANDATORY**: A Session ID from context (e.g., "sharegpt_yywfIrx_0")
+   - "dates": {{"items": []}}         # session dates or event dates mentioned (e.g., ["2023/04/10", "March 15th"])
+   - "entities": {{"items": []}}      # key entities: people, places, products, services mentioned
+   - "facts": {{"items": []}}         # extracted factual statements (paraphrased, concise)
+   - "temporal_cues": {{"items": []}} # temporal markers: "first", "before", "after", "on March 15th", "3/22"
+6. `tags` is a list of lowercase keywords (≤5 items) mixing:
+   - domain hints: "car","travel","finance","health","shopping","home","work","hobby"
+   - memory type: "semantic-evidence","episodic-experience","temporal-fact","user-preference"
+   Use "semantic-evidence" for factual slots and "episodic-experience" for event/timeline slots.
+
+CRITICAL: Every slot MUST have `attachments.session_ids` populated with the Session ID(s) from the context where the information originated. This is essential for memory provenance tracking.
+
+Output STRICTLY as JSON within the tags below (no extra commentary):
+{{
+    "slots": [
+        {{
+            "stage": "user_event",
+            "topic": "car first service experience",
+            "summary": "User had their new car serviced for the first time on March 15th. It was described as a great experience.",
+            "attachments": {{
+                "session_ids": {{"items": ["answer_4be1b6b4_2"]}},
+                "dates": {{"items": ["March 15th", "2023/04/10"]}},
+                "entities": {{"items": ["new car", "car service"]}},
+                "facts": {{"items": ["first service on March 15th", "great experience"]}},
+                "temporal_cues": {{"items": ["first time", "on March 15th"]}}
+            }},
+            "tags": ["car","service","semantic-evidence","temporal-fact"]
+        }},
+        {{
+            "stage": "user_timeline",
+            "topic": "gps system issue and fix",
+            "summary": "User experienced GPS system malfunction on 3/22 after first car service. Dealership replaced entire GPS system, now working flawlessly.",
+            "attachments": {{
+                "session_id": {{"items": "answer_4be1b6b4_3"}},
+                "dates": {{"items": ["3/22", "2023/04/10"]}},
+                "entities": {{"items": ["GPS system", "dealership"]}},
+                "facts": {{"items": ["GPS issue on 3/22", "system replaced", "now working"]}},
+                "temporal_cues": {{"items": ["on 3/22", "after first service"]}}
+            }},
+            "tags": ["car","gps","episodic-experience","temporal-fact"]
+        }}
+    ]
+}}
+""")
 
 TRANSFER_EXPERIMENT_AGENT_CONTEXT_TO_WORKING_SLOTS_PROMPT = dedent("""
 Convert the Experiment Agent workflow context into at most {max_slots} WorkingSlot entries ready for filtering/routing.

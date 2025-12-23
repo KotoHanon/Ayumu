@@ -21,7 +21,7 @@ from memory.memory_system.utils import (
 )
 
 
-class QwenAgentThinkHandlerWithAMem(OpenAICompletionsHandler):
+class QwenAgentThinkHandlerWithCompress(OpenAICompletionsHandler):
 
     def __init__(
         self,
@@ -45,7 +45,7 @@ class QwenAgentThinkHandlerWithAMem(OpenAICompletionsHandler):
         self.llm = get_chat_model({
         'model': model_name,  # name of the model served by vllm server
         'model_type': 'oai',
-        'model_server':'http://localhost:8015/v1', # can be replaced with server host
+        'model_server':'http://localhost:8014/v1', # can be replaced with server host
         'api_key': "none",
         'generate_cfg': {
             'fncall_prompt_type': 'nous',
@@ -102,7 +102,6 @@ class QwenAgentThinkHandlerWithAMem(OpenAICompletionsHandler):
 
     @override
     def _pre_query_processing_FC(self, inference_data: dict, test_entry: dict) -> dict:
-        self._reset_if_new_case(test_entry["id"])
         inference_data["message"] = []
         return inference_data
 
@@ -171,7 +170,7 @@ class QwenAgentThinkHandlerWithAMem(OpenAICompletionsHandler):
 
         if len(model_response_data.get("tool_call_ids", [])) == 0:
             # No tool calls means that the end of turn
-            self._materialize_turn_slots()
+            self._compress_history_message(inference_data)
 
         return inference_data
 
@@ -238,6 +237,18 @@ Here is the conversation history:
 {_safe_dump_str(message)}
 """
 
-        compression_response, _ = self.llm.quick_chat_oai([{"role": "user", "content": prompt}])
-        # Replace the assistant message with the compressed history
-        inference_data["message"] = [{"role": "assistant", "content": compression_response.output_text}]
+        compression_response = None
+        for res in self.llm.quick_chat_oai([{"role": "user", "content": prompt}]):
+            compression_response = res
+
+        if compression_response is None:
+            raise RuntimeError("No response from quick_chat_oai")
+
+        summary = compression_response["choices"][0]["message"].get("content", "")
+        summary = summary.strip()
+
+        inference_data["message"] = [
+            {"role": "user", "content": "Here is the compressed conversation history."},
+            {"role": "assistant", "content": summary},
+            ]
+        return inference_data

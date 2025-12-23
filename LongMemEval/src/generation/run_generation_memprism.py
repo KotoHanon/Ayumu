@@ -10,6 +10,15 @@ from datetime import datetime, timedelta
 import argparse
 from transformers import AutoTokenizer
 import tiktoken
+import asyncio
+
+from memory.memory_system.utils import (
+    _safe_dump_str,
+    _multi_thread_run,
+)
+from memory.api.faiss_memory_system_api import FAISSMemorySystem
+from memory.api.slot_process_api import SlotProcess
+from textwrap import dedent
 
 
 def parse_args():
@@ -43,7 +52,7 @@ def check_args(args):
     print(args)
 
 
-def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, history_format: str, cot: bool, tokenizer, tokenizer_backend, max_retrieval_length, merge_key_expansion_into_value, con=False, con_client=None, con_model=None):    
+def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, history_format: str, cot: bool, tokenizer, tokenizer_backend, max_retrieval_length, merge_key_expansion_into_value, slot_process, semantic_memory_system, episodic_memory_system, con=False, con_client=None, con_model=None, max_workers=20):    
     if retriever_type == 'no-retrieval':
         answer_prompt_template = '{}'
         if cot:
@@ -114,6 +123,26 @@ def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, his
                 retrieved_chunks += [(session_date, x) for x in session_entry if x['role'] == 'user']
             else:
                 retrieved_chunks += [(session_date, x) for x in session_entry]
+
+    elif retriever_type == "memprism-session":
+        for session_date, session_entry, session_id in zip(entry['haystack_dates'], entry['haystack_sessions'], entry['haystack_session_ids']):
+            if useronly:
+                retrieved_chunks.append((session_date, [x for x in session_entry if x['role'] == 'user']))
+                session_str = _safe_dump_str([x for x in session_entry if x['role'] == 'user'])
+            else:
+                retrieved_chunks.append((session_date, session_entry))
+                session_str = _safe_dump_str(session_entry)
+            context = dedent(f"""
+            Here is a chat session between you and a user:
+            Session ID: {session_id}
+            Session Content: {session_str}
+            """)
+            # transfer chat context to working slots, filter and route slots, and transfer slots to memory 
+            working_slots = slot_process.transfer_chat_agent_context_to_working_slots(context=context)
+            _multi_thread_run(multi_thread_filter_and_route_slot, working_slots, max_workers=max_workers)
+            _multi_thread_run(multi_thread_transfer_slot_to_memory, slot_process.filter_and_route_slots, max_workers=max_workers)
+            asyncio.run(multi_thread_transfer_dicts_to_memories(slot_process, semantic_memory_system, episodic_memory_system))
+
             
     # get retrieved chunks
     elif retriever_type == "flat-turn":
@@ -287,6 +316,56 @@ def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, his
 def chat_completions_with_backoff(client, **kwargs):
     return client.chat.completions.create(**kwargs)
 
+async def multi_thread_transfer_dicts_to_memories(self, slot_process: SlotProcess, semantic_memory_system: FAISSMemorySystem, episodic_memory_system: FAISSMemorySystem, is_abstract: bool = False):
+    semantic_records = []
+    episodic_records = []
+
+    for i in slot_process.memory_dict:
+        if i['memory_type'] == 'semantic':
+            semantic_records.append(semantic_memory_system.instantiate_sem_record(**i['input']))
+        elif i['memory_type'] == 'episodic':
+            episodic_records.append(episodic_memory_system.instantiate_epi_record(**i['input']))
+    
+    if is_abstract and len(episodic_records) > 0:
+        await abstract_episodic_records_to_semantic_record(episodic_records, semantic_memory_system, episodic_memory_system)
+
+    if len(semantic_records) > 0:
+        try:
+            semantic_memory_system.upsert_normal_records(semantic_records)
+        except Exception as e:
+            import traceback
+            print("[ERROR] upsert_normal_records for semantic_records failed:", repr(e))
+            traceback.print_exc()
+    if len(episodic_records) > 0:
+        try:
+            episodic_memory_system.upsert_normal_records(episodic_records)
+        except Exception as e:
+            import traceback
+            print("[ERROR] upsert_normal_records for episodic_records failed:", repr(e))
+            traceback.print_exc()
+
+async def abstract_episodic_records_to_semantic_record(epi_records: List[EpisodicRecord], semantic_memory_system: FAISSMemorySystem, episodic_memory_system: FAISSMemorySystem, consistency_threshold: float = 0.8):
+    try:
+        abstract_result, cidmap2semrec = await episodic_memory_system.abstract_episodic_records(epi_records, consistency_threshold)
+        print(f"[Info] Number of abstracted semantic records: {len(abstract_result)}")
+        semantic_memory_system.upsert_abstract_semantic_records(abstract_result, cidmap2semrec)
+    except Exception as e:
+        import traceback
+        print("[ERROR] abstract_episodic_records_to_semantic_record failed:", repr(e))
+        traceback.print_exc()
+
+def reset_memprism_system(args):
+    if "gpt" in args.model_name.lower():
+        llm_backend = "openai"
+    else:
+        llm_backend = "vllm"
+
+    slot_process = SlotProcess(llm_name=args.model_alias, llm_backend=llm_backend)
+    semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_model=args.model_alias, llm_backend=llm_backend)
+    episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_model=args.model_alias, llm_backend=llm_backend)
+
+    return slot_process, semantic_memory_system, episodic_memory_system
+    
 
 def main(args):
     # setup
@@ -296,6 +375,8 @@ def main(args):
         api_key=args.openai_key,
         base_url=args.openai_base_url,
     )
+
+    slot_process, semantic_memory_system, episodic_memory_system = reset_memprism_system(args)
 
     try:
         in_data = json.load(open(args.in_file))
@@ -347,14 +428,19 @@ def main(args):
             prompt = prepare_prompt(entry, args.retriever_type, args.topk_context, args.useronly=='true',
                                     args.history_format, args.cot=='true', 
                                     tokenizer=tokenizer, tokenizer_backend=tokenizer_backend, max_retrieval_length=max_retrieval_length,
-                                    merge_key_expansion_into_value=args.merge_key_expansion_into_value,
+                                    merge_key_expansion_into_value=args.merge_key_expansion_into_value, slot_process=slot_process,
+                                    semantic_memory_system=semantic_memory_system, episodic_memory_system=episodic_memory_system,
                                     con=True, con_client=client, con_model=args.model_name)
         else:
             prompt = prepare_prompt(entry, args.retriever_type, args.topk_context, args.useronly=='true',
                                     args.history_format, args.cot=='true', 
                                     tokenizer=tokenizer, tokenizer_backend=tokenizer_backend, max_retrieval_length=max_retrieval_length,
-                                    merge_key_expansion_into_value=args.merge_key_expansion_into_value)
+                                    merge_key_expansion_into_value=args.merge_key_expansion_into_value, slot_process=slot_process,
+                                    semantic_memory_system=semantic_memory_system, episodic_memory_system=episodic_memory_system,)
             print('Prepared prompt:', prompt)
+
+        # reset MemPrism system after each example
+        slot_process, semantic_memory_system, episodic_memory_system = reset_memprism_system(args)
 
         try:
             print(json.dumps({'question_id': entry['question_id'], 'question': entry['question'], 'answer': entry['answer']}, indent=4), flush=True)
