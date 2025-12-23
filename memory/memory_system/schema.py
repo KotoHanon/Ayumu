@@ -216,10 +216,17 @@ class Schema:
                                 "type": "object",  # REQUIRED, not nullable for CHAT
                                 "additionalProperties": False,
                                 "properties": {
-                                    "session_id": {
-                                        "type": "string",
-                                        "minLength": 10,
-                                        "maxLength": 50
+                                    "session_ids": {
+                                        "type": "object",
+                                        "additionalProperties": False,
+                                        "properties": {
+                                            "items": {
+                                                "type": "array",
+                                                "minItems": 1,
+                                                "items": {"type": "string"},
+                                                "maxItems": 1
+                                            }
+                                        },
                                         "required": ["items"]
                                     },
                                     "dates": {

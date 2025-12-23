@@ -277,7 +277,7 @@ def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, his
         else:
             raise NotImplementedError
 
-        if retriever_type in ["orig-session", "flat-session", "oracle-session"]:
+        if retriever_type in ["orig-session", "flat-session", "oracle-session", "memprism-session"]:
             history_string += '\n### Session {}:\nSession Date: {}\nSession Content:\n{}\n'.format(i+1, chunk_date, sess_string)
         elif retriever_type in ["orig-turn", "flat-turn", "oracle-turn"]:  
             # history_string += '\n### Round {}:\nDate: {}\nRound Content:\n{}\n'.format(i+1, chunk_date, sess_string)
@@ -360,12 +360,12 @@ def reset_memprism_system(args):
     else:
         llm_backend = "vllm"
 
-    slot_process = SlotProcess(llm_name=args.model_alias, llm_backend=llm_backend)
+    slot_process = SlotProcess(llm_name=args.model_alias, llm_backend=llm_backend, task="chat")
     semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_model=args.model_alias, llm_backend=llm_backend)
     episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_model=args.model_alias, llm_backend=llm_backend)
 
     return slot_process, semantic_memory_system, episodic_memory_system
-    
+
 
 def main(args):
     # setup

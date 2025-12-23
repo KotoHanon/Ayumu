@@ -73,7 +73,7 @@ class QwenAgentThinkHandlerWithMemory(OpenAICompletionsHandler):
     })
 
         self.MEM_TAG = "PRIVATE_MEMORY:"
-        self.slot_process = SlotProcess()
+        self.slot_process = SlotProcess(task="fc")
         self._event_buffer: List[str] = []
         self.slots = []
         self.semantic_memory_system = FAISSMemorySystem(memory_type="semantic")
@@ -116,7 +116,7 @@ class QwenAgentThinkHandlerWithMemory(OpenAICompletionsHandler):
             '''asyncio.run(self.transfer_slots_to_memories(self.slots, is_abstract=True))'''
             # Multi-threaded version
             self.multi_thread_transfer_slots_to_memories()
-            self.slot_process = SlotProcess() # Reset
+            self.slot_process = SlotProcess(task="fc") # Reset
             self.slots = [] # Reset
 
     def _strip_old_memory_block_keep_fc_items(self, message: list) -> list:

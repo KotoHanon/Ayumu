@@ -500,7 +500,7 @@ class MemPrismClient(BaseClient):
     def __init__(self, model: str = "gpt-4o-mini", use_local_model: bool = False):
         litellm.drop_params = True
         # Initialize the memory system 🚀
-        self.slot_process = SlotProcess()
+        self.slot_process = SlotProcess(task="qa")
         self.semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_name="gpt-4o-mini")
         self.episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_name="gpt-4o-mini")
 
@@ -512,13 +512,13 @@ class MemPrismClient(BaseClient):
         if self.use_local_model:
             self.url = "http://localhost:8014"
             self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B")
-            self.slot_process = SlotProcess(llm_name=model, llm_backend="vllm")
+            self.slot_process = SlotProcess(llm_name=model, llm_backend="vllm", task="qa")
             self.semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_name=model, llm_backend="vllm")
             self.episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_name=model, llm_backend="vllm")
         else:
             assert "OPENAI_API_KEY" in os.environ, "OPENAI_API_KEY is not set"
             #assert "OPENROUTER_API_KEY" in os.environ, "OPENROUTER_API_KEY is not set"
-            self.slot_process = SlotProcess(llm_name=model, llm_backend="openai")
+            self.slot_process = SlotProcess(llm_name=model, llm_backend="openai", task="qa")
             self.semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_name=model, llm_backend="openai")
             self.episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_name=model, llm_backend="openai")
 
@@ -640,7 +640,7 @@ class MemPrismClient(BaseClient):
 
         routed_slot_container = await self.slot_process.filter_and_route_slots()
         try:
-            inputs = await self.slot_process.generate_long_term_memory(routed_slots=routed_slot_container)
+            inputs = await self.slot_process.generate_long_term_memory(routed_slots=routed_slot_container, task="qa")
         except Exception as e:
             import traceback
             print("[ERROR] generate_long_term_memory failed:", repr(e))
@@ -729,7 +729,10 @@ class MemPrismClient(BaseClient):
         return True
     
     def reset(self):
-        self.slot_process = SlotProcess()
+        if self.use_local_model:
+            self.slot_process = self.slot_process = SlotProcess(llm_name=model, llm_backend="vllm")
+        else:
+            self.slot_process = SlotProcess(task="qa")
         
         self.retrieved_working_slots = []
         self.semantic_memories = []

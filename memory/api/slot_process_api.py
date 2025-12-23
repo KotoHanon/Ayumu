@@ -17,11 +17,20 @@ from memory.memory_system.utils import (
 )
 from memory.memory_system.user_prompt import (
     WORKING_SLOT_COMPRESS_USER_PROMPT,
-    TRANSFER_EXPERIMENT_AGENT_CONTEXT_TO_WORKING_SLOTS_PROMPT,
     TRANSFER_SLOT_TO_TEXT_PROMPT,
-    TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT,
-    TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT,
-    TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT,
+    TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_EXPEIRMENT,
+    TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_CHAT,
+    TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_FC,
+    TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_QA,
+    TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_EXPRIMENT,
+    TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_CHAT,
+    TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_FC,
+    TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_QA,
+    TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_EXPERIMENT,
+    TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_CHAT,
+    TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_FC,
+    TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_QA,
+    TRANSFER_EXPERIMENT_AGENT_CONTEXT_TO_WORKING_SLOTS_PROMPT,
     TRANSFER_QA_AGENT_CONTEXT_TO_WORKING_SLOT_PROMPT,
     TRANSFER_FC_AGENT_CONTEXT_TO_WORKING_SLOT_PROMPT,
     TRANSFER_CHAT_AGENT_CONTEXT_TO_WORKING_SLOT_PROMPT,
@@ -37,12 +46,13 @@ from memory.memory_system.schema import Schema
 from tqdm import tqdm
 
 class SlotProcess:
-    def __init__(self, llm_name: str = "gpt-4o-mini", llm_backend: Literal["openai", "vllm"] = "openai"):
+    def __init__(self, llm_name: str = "gpt-4o-mini", llm_backend: Literal["openai", "vllm"] = "openai", task: Literal["experiment", "qa", "fc", "chat"] = "qa"):
         self.slot_container: Dict[str, WorkingSlot] = {}
         self.filtered_slot_container: List[WorkingSlot] = []
         self.routed_slot_container: List[Dict] = []
         self.llm_model = OpenAIClient(model=llm_name, backend=llm_backend)
         self.memory_dict = []
+        self.task = task
 
     def add_slot(self, slot: WorkingSlot) -> None:
         self.slot_container[slot.to_dict().get('id')] = slot
@@ -98,7 +108,7 @@ class SlotProcess:
 
         return scored_slots[:k]
         
-    async def filter_and_route_slots(self, slots: List[WorkingSlot] = None, task: Literal["experiment", "qa", "fc", "chat"] = "qa") -> List[Dict[str, WorkingSlot]]:
+    async def filter_and_route_slots(self, slots: List[WorkingSlot] = None) -> List[Dict[str, WorkingSlot]]:
         self.filtered_slot_container = []
         self.routed_slot_container = []
 
@@ -106,14 +116,14 @@ class SlotProcess:
             slots = list(self.slot_container.values())
 
         for slot in tqdm(slots):
-            check_result = await slot.slot_filter(self.llm_model, task=task)
+            check_result = await slot.slot_filter(self.llm_model, task=self.task)
             print(check_result)
             if check_result == True:
                 self.filtered_slot_container.append(slot)
         
         try:
             for filtered_slot in self.filtered_slot_container:
-                route_result = await filtered_slot.slot_router(self.llm_model, task=task)
+                route_result = await filtered_slot.slot_router(self.llm_model, task=self.task)
                 pair = {
                     "memory_type": route_result,
                     "slot": filtered_slot
@@ -124,8 +134,8 @@ class SlotProcess:
         
         return self.routed_slot_container
 
-    def multi_thread_filter_and_route_slot(self, slot: WorkingSlot, task: Literal["experiment", "qa", "fc", "chat"] = "qa"):
-        check_result = asyncio.run(slot.slot_filter(self.llm_model, task=task))
+    def multi_thread_filter_and_route_slot(self, slot: WorkingSlot):
+        check_result = asyncio.run(slot.slot_filter(self.llm_model, task=self.task))
         if check_result == True:
             try:
                 route_result = asyncio.run(slot.slot_router(self.llm_model))
@@ -466,11 +476,11 @@ class SlotProcess:
 
         try:
             if memory_type == "semantic":
-                input_dict = asyncio.run(self.transfer_slot_to_semantic_record(slot))
+                input_dict = asyncio.run(self.transfer_slot_to_semantic_record(slot)
             elif memory_type == "episodic":
                 input_dict = asyncio.run(self.transfer_slot_to_episodic_record(slot))
             elif memory_type == "procedural":
-                input_dict = asyncio.run(self.transfer_slot_to_procedural_record(slot))
+                input_dict = asyncio.run(self.transfer_slot_to_procedural_record(slot,))
         except Exception as exc:
             print(
                 f"[MEMORY] Failed to convert slot {getattr(slot, 'id', 'unknown')} "
@@ -482,12 +492,40 @@ class SlotProcess:
 
 
     async def transfer_slot_to_semantic_record(self, slot: WorkingSlot) -> Dict[str, Any]:
-        system_prompt = (
-            "You are a senior research archivist. Convert the WorkingSlot into a reusable "
-            "semantic memory entry that captures enduring, generalizable insights."
-        )
+        if self.task == "experiment":
+            system_prompt = (
+                "You are a senior research archivist. Convert the WorkingSlot into a reusable "
+                "semantic memory entry that captures enduring, generalizable insights."
+            )
 
-        user_prompt = TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT.format(dump_slot_json=dump_slot_json(slot))
+            user_prompt = TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_EXPEIRMENT.format(dump_slot_json=dump_slot_json(slot))
+        
+        elif self.task == "qa":
+            system_prompt = (
+                "You are an expert knowledge base curator for multi-hop QA systems. "
+                "Extract stable, factual evidence from the WorkingSlot (e.g., entity attributes, relations, Wikipedia facts) "
+                "into a semantic memory entry suitable for future question answering. "
+                "Focus on facts, not strategies. Output only the requested JSON."
+            )
+            user_prompt = TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_QA.format(dump_slot_json=dump_slot_json(slot))
+         
+        elif self.task == "fc":
+            system_prompt = (
+                "You are a function-calling schema expert. "
+                "Extract stable tool constraints, argument mappings, and validated invariants from the WorkingSlot "
+                "into a semantic memory entry. Focus on declarative knowledge (what is true), not procedural steps (how to do). "
+                "Output only the requested JSON."
+            )
+            user_prompt = TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_FC.format(dump_slot_json=dump_slot_json(slot))
+        
+        else:
+            system_prompt = (
+                "You are a personal memory archivist. "
+                "Extract stable user facts (preferences, attributes, relationships, possessions) from the WorkingSlot "
+                "into a semantic memory entry suitable for answering questions about the user's history. "
+                "Focus on timeless facts, not event narratives. Output only the requested JSON."
+            )
+            user_prompt = TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_CHAT.format(dump_slot_json=dump_slot_json(slot))
 
         response = await self.llm_model.complete(system_prompt=system_prompt, user_prompt=user_prompt)
         payload = _extract_json_between(response, "semantic-record", "semantic-record")
@@ -509,12 +547,39 @@ class SlotProcess:
         }
 
     async def transfer_slot_to_episodic_record(self, slot: WorkingSlot) -> Dict[str, Any]:
-        system_prompt = (
-            "You are a scientific lab journal assistant. Convert the WorkingSlot into an episodic "
-            "memory capturing Situation → Action → Result, including measurable outcomes."
-        )
-
-        user_prompt = TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT.format(dump_slot_json=dump_slot_json(slot), stage=slot.stage)
+        if self.task == "experiment":
+            system_prompt = (
+                "You are a scientific lab journal assistant. Convert the WorkingSlot into an episodic "
+                "memory capturing Situation → Action → Result, including measurable outcomes."
+            )
+            user_prompt = TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_EXPRIMENT.format(dump_slot_json=dump_slot_json(slot), stage=slot.stage)
+        
+        elif self.task == "qa":
+            system_prompt = (
+                "You are a QA workflow historian. "
+                "Convert the WorkingSlot into an episodic memory capturing the Situation → Action → Result narrative "
+                "of how a multi-hop question was approached. Include retrieval strategies, evidence paths, and failure patterns. "
+                "Output only the requested JSON."
+            )
+            user_prompt = TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_QA.format(dump_slot_json=dump_slot_json(slot), stage=slot.stage)
+        
+        elif self.task == "fc":
+            system_prompt = (
+                "You are a function-calling trajectory logger. "
+                "Convert the WorkingSlot into an episodic memory capturing the Situation → Action → Result narrative "
+                "of a tool-use episode. Include error handling, retry logic, and tool output processing patterns. "
+                "Output only the requested JSON."
+            )
+            user_prompt = TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_FC.format(dump_slot_json=dump_slot_json(slot), stage=slot.stage)
+        
+        else:
+            system_prompt = (
+                "You are a personal timeline curator. "
+                "Convert the WorkingSlot into an episodic memory capturing a chronological user experience "
+                "with temporal context (What → When → Who/Where → Outcome). Preserve session provenance and temporal cues "
+                "to support timeline reasoning. Output only the requested JSON."
+            )
+            user_prompt = TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_CHAT.format(dump_slot_json=dump_slot_json(slot), stage=slot.stage)
 
         response = await self.llm_model.complete(system_prompt=system_prompt, user_prompt=user_prompt)
         payload = _extract_json_between(response, "episodic-record", "episodic-record")
@@ -538,12 +603,37 @@ class SlotProcess:
         }
 
     async def transfer_slot_to_procedural_record(self, slot: WorkingSlot) -> Dict[str, Any]:
-        system_prompt = (
-            "You are an expert operations documenter. Convert the WorkingSlot into a procedural "
-            "memory entry describing reproducible steps/commands."
-        )
+        if self.task == "experiment":
+            system_prompt = (
+                "You are an expert operations documenter. Convert the WorkingSlot into a procedural "
+                "memory entry describing reproducible steps/commands."
+            )
 
-        user_prompt = TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT.format(dump_slot_json=dump_slot_json(slot))
+            user_prompt = TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT.format(dump_slot_json=dump_slot_json(slot))
+        elif self.task == "qa":
+            system_prompt = (
+                "You are a QA playbook author. "
+                "Convert the WorkingSlot into a procedural memory entry capturing reusable step-by-step strategies "
+                "for solving multi-hop questions. Focus on actionable, generalizable workflows. "
+                "Output only the requested JSON."
+            )
+            user_prompt = TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_QA.format(dump_slot_json=dump_slot_json(slot))
+        elif self.task == "fc":
+            system_prompt = (
+                "You are a tool-use SOP (Standard Operating Procedure) writer. "
+                "Convert the WorkingSlot into a procedural memory entry capturing reusable checklists and playbooks "
+                "for function calling. Include validation steps, error recovery procedures, and best practices. "
+                "Output only the requested JSON."
+            )
+            user_prompt = TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_FC.format(dump_slot_json=dump_slot_json(slot))
+        else:
+            system_prompt = (
+                "You are a personal assistant workflow designer. "
+                "Convert the WorkingSlot into a procedural memory entry capturing reusable interaction patterns "
+                "or decision-making workflows related to user preferences and habits. "
+                "Focus on generalizable, user-centric procedures. Output only the requested JSON."
+            )
+            user_prompt = TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_CHAT.format(dump_slot_json=dump_slot_json(slot))
 
         response = await self.llm_model.complete(system_prompt=system_prompt, user_prompt=user_prompt)
         payload = _extract_json_between(response, "procedural-record", "procedural-record")

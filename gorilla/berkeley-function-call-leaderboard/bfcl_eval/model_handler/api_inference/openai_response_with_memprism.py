@@ -47,7 +47,7 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
         self.client = OpenAI(**self._build_client_kwargs())
         self.MEM_TAG = "PRIVATE_MEMORY:"
 
-        self.slot_process = SlotProcess(llm_name=model_name, llm_backend="openai")
+        self.slot_process = SlotProcess(llm_name=model_name, llm_backend="openai", task="fc")
         self._event_buffer: List[str] = []
         self.slots = []
         self.semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_name=model_name, llm_backend="openai")

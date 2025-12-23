@@ -263,6 +263,7 @@ class OpenAIClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "messages": messages,
+            "enable_thinking": False,
         }
         if stop:
             payload["stop"] = stop

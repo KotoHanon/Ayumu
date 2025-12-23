@@ -399,7 +399,7 @@ Authoring rules:
 4. `topic` is a 3–6 word slug referencing the subject (lowercase, space-separated),
    e.g. "car first service date", "gps system replacement", "gas station rewards program".
 5. `attachments` is **REQUIRED** and MUST include:
-   - "session_ids": {{"items": str}}   # **MANDATORY**: A Session ID from context (e.g., "sharegpt_yywfIrx_0")
+   - "session_ids": {{"items": []}}   # **MANDATORY**: A Session ID from context (e.g., ["sharegpt_yywfIrx_0"])
    - "dates": {{"items": []}}         # session dates or event dates mentioned (e.g., ["2023/04/10", "March 15th"])
    - "entities": {{"items": []}}      # key entities: people, places, products, services mentioned
    - "facts": {{"items": []}}         # extracted factual statements (paraphrased, concise)
@@ -432,7 +432,7 @@ Output STRICTLY as JSON within the tags below (no extra commentary):
             "topic": "gps system issue and fix",
             "summary": "User experienced GPS system malfunction on 3/22 after first car service. Dealership replaced entire GPS system, now working flawlessly.",
             "attachments": {{
-                "session_id": {{"items": "answer_4be1b6b4_3"}},
+                "session_ids": {{"items": "[answer_4be1b6b4_3]"}},
                 "dates": {{"items": ["3/22", "2023/04/10"]}},
                 "entities": {{"items": ["GPS system", "dealership"]}},
                 "facts": {{"items": ["GPS issue on 3/22", "system replaced", "now working"]}},
@@ -484,7 +484,7 @@ Output STRICTLY as JSON within the tags below:
 }}
 """)
 
-TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT = dedent("""
+TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_EXPEIRMENT = dedent("""
 Transform the WorkingSlot into a semantic memory entry suitable for FAISS retrieval in HotpotQA-style multi-hop QA.
 
 Expectations:
@@ -508,7 +508,102 @@ Output STRICTLY as JSON inside the tags, with no extra text:
 </semantic-record>
 """)
 
-TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT = dedent("""
+TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_QA = dedent("""
+Transform the WorkingSlot into a semantic memory entry suitable for FAISS retrieval in HotpotQA-style multi-hop QA.
+
+Expectations:
+- The semantic record MUST capture **factual evidence** grounded in the WorkingSlot (e.g., retrieved Wikipedia passages, entity attributes, relations).
+- `summary` (≤80 words) is a compact, question-agnostic factual statement that can be reused as evidence for future multi-hop questions.
+- `detail` elaborates the supporting evidence:
+  - Paraphrased or briefly quoted facts from retrieved sources.
+  - Entity relations (A located_in B, A spouse_of B, A part_of B, etc.).
+  - Source references (Wikipedia page titles, IDs) when available.
+  - Use "\\n" to separate logically distinct atomic facts.
+- Avoid speculation or strategy advice; only include information directly supported by the WorkingSlot content.
+- `tags` should mix:
+  - Entity names: "albert-einstein", "new-york-city"
+  - Domain hints: "hotpotqa", "wikipedia", "multi-hop"
+  - Relation types: "birthplace", "spouse", "location", "part-of"
+
+<working-slot>
+{dump_slot_json}
+</working-slot>
+
+Output STRICTLY as JSON inside the tags, with no extra text:
+<semantic-record>
+{{
+    "summary": "Compact factual evidence (e.g., 'Albert Einstein was born in Ulm, Germany on March 14, 1879. He received Nobel Prize in Physics in 1921.')",
+    "detail": "Atomic fact 1: Einstein birthplace is Ulm, Germany.\\nAtomic fact 2: Birth date March 14, 1879.\\nAtomic fact 3: Nobel Prize Physics 1921.\\nSource: Wikipedia:Albert_Einstein",
+    "tags": ["hotpotqa","wikipedia","albert-einstein","birthplace","nobel-prize"]
+}}
+</semantic-record>
+""")
+
+TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_CHAT = dedent("""
+Transform the WorkingSlot into a semantic memory entry suitable for FAISS retrieval in LongMemEval-style personal chat history.
+
+Expectations:
+- The semantic record MUST capture **stable user facts** grounded in the WorkingSlot (preferences, attributes, relationships, possessions).
+- `summary` (≤80 words) is a compact, context-independent factual statement about the user.
+- `detail` elaborates the evidence:
+  - User attributes or preferences stated across sessions.
+  - Relationships with people, places, organizations.
+  - Possession or usage of products/services.
+  - Include session_id for provenance.
+  - Use "\\n" to separate distinct facts.
+- Avoid event narratives (those go to episodic); focus on **timeless facts**.
+- `tags` should mix:
+  - Domain: "car", "travel", "finance", "health", "shopping"
+  - Fact type: "preference", "attribute", "relationship", "possession"
+  - Memory type: "semantic-evidence", "user-preference"
+
+<working-slot>
+{dump_slot_json}
+</working-slot>
+
+Output STRICTLY as JSON inside the tags, with no extra text:
+<semantic-record>
+{{
+    "summary": "Compact user fact (e.g., 'User owns a new car, gets regular service at dealership, uses Shell gas station rewards program.')",
+    "detail": "Fact 1: User owns new car (mentioned in session answer_4be1b6b4_2).\\nFact 2: Prefers dealership for service.\\nFact 3: Active Shell rewards program member.\\nFact 4: Tracks gas mileage (avg 32 mpg).\\nProvenance: sessions answer_4be1b6b4_2, answer_4be1b6b4_3",
+    "tags": ["car","user-preference","semantic-evidence","rewards-program"]
+}}
+</semantic-record>
+""")
+
+TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_FC = dedent("""
+Transform the WorkingSlot into a semantic memory entry suitable for FAISS retrieval in BFCL-style function calling.
+
+Expectations:
+- The semantic record MUST capture **stable function-calling knowledge** (tool schemas, constraints, argument mappings).
+- `summary` (≤80 words) is a compact, reusable constraint or invariant about tool usage.
+- `detail` elaborates the evidence:
+  - Tool schema details (required fields, enums, type constraints).
+  - Argument-filling constraints (no-assumption rules, defaults policy).
+  - Validated input-output mappings.
+  - Include specific tool names and field names when decisive.
+  - Use "\\n" to separate distinct rules.
+- Avoid procedural steps (those go to procedural); focus on **declarative knowledge**.
+- `tags` should mix:
+  - Tool names: "get_weather", "book_flight"
+  - Constraint types: "required-field", "enum-constraint", "no-assumption"
+  - Domain: "bfcl", "function-calling", "semantic-evidence"
+
+<working-slot>
+{dump_slot_json}
+</working-slot>
+
+Output STRICTLY as JSON inside the tags, with no extra text:
+<semantic-record>
+{{
+    "summary": "Compact tool constraint (e.g., 'get_weather requires location (enum: city names) and units (enum: celsius/fahrenheit). No defaults; must ask user if missing.')",
+    "detail": "Tool: get_weather\\nRequired: location (type: enum[city_names]), units (type: enum[celsius, fahrenheit])\\nConstraint: no assumption rule - ask clarification if either field missing\\nEnum validation: units must match exactly 'celsius' or 'fahrenheit'\\nSource: tool schema + no-assumption system message",
+    "tags": ["bfcl","function-calling","get-weather","required-field","enum-constraint","no-assumption"]
+}}
+</semantic-record>
+""")
+
+TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_EXPRIMENT = dedent("""
 Convert the WorkingSlot into an episodic memory record emphasizing Situation → Action → Result.
 
 <working-slot>
@@ -532,8 +627,132 @@ Output STRICTLY as JSON inside the tags:
 </episodic-record>
 """)
 
+TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_QA = dedent("""
+Convert the WorkingSlot into an episodic memory record emphasizing the QA process: Question → Retrieval/Reasoning → Answer.
 
-TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT = dedent("""
+Expectations:
+- The episodic record captures **reusable QA patterns or strategies** that worked (or failed) for multi-hop questions.
+- `summary` (≤80 words) follows: Question Type → Strategy → Result.
+- `detail` elaborates:
+  - "situation": Question characteristics, entities involved, required reasoning type.
+  - "actions": Retrieval steps, reasoning steps, bridge entity identification.
+  - "results": Answer found/not found, what worked/failed.
+  - "observations": Key insights about question pattern or retrieval strategy.
+- Focus on **generalizable patterns**, not one-off traces.
+- `tags` should mix:
+  - Question type: "bridge-entity", "comparison", "temporal-reasoning"
+  - Strategy: "two-hop-retrieval", "entity-expansion"
+  - Outcome: "success", "failure", "partial"
+
+<working-slot>
+{dump_slot_json}
+</working-slot>
+
+Output STRICTLY as JSON inside the tags:
+<episodic-record>
+{{
+    "stage": "{stage}",
+    "summary": "≤80 word Question Type → Strategy → Result narrative (e.g., 'Bridge entity question about birthplace and university. Strategy: retrieve person's birthplace first, then search university in that city. Result: successfully found answer.')",
+    "detail": {{
+        "situation": "Multi-hop question requiring bridge entity (person → birthplace → university)",
+        "actions": ["retrieved person's Wikipedia page", "extracted birthplace entity", "searched universities in birthplace city", "verified university founding date"],
+        "results": ["answer found: University of Ulm", "bridge entity strategy effective"],
+        "observations": ["birthplace serves as reliable bridge for person-location questions", "Wikipedia infoboxes contain structured relation data"]
+    }},
+    "tags": ["hotpotqa","bridge-entity","two-hop","episodic-experience","success"]
+}}
+</episodic-record>
+""")
+
+TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_CHAT = dedent("""
+Convert the WorkingSlot into an episodic memory record suitable for FAISS retrieval in LongMemEval-style personal chat history.
+
+Expectations:
+- The episodic record MUST capture **chronological user experiences** with temporal context, not generic advice.
+- `summary` (≤80 words) is a narrative combining What → When → Who/Where → Outcome, preserving the user's personal timeline.
+- `detail` elaborates the event context:
+  - "session_id": **MANDATORY** - The exact Session ID from attachments.session_ids (first item if multiple).
+  - "situation": Background and setting (location, participants, user state before event).
+  - "actions": Concrete user actions or events that occurred (chronologically ordered).
+  - "results": Outcomes, user reactions, state changes, or follow-up events.
+  - "temporal_context": Timeline anchors extracted from attachments (dates, temporal_cues, sequences).
+  - "entities_involved": Key people, places, objects from the event.
+  - "facts": Atomic facts from attachments.facts for verification.
+- Preserve temporal reasoning cues ("first time", "after X", "before Y", specific dates) to support "when/how long/order" questions.
+- `tags` should mix:
+  - Event type: "user-event", "user-preference", "user-timeline", "user-relationship"
+  - Domain: "car", "travel", "health", "shopping", "finance", "work", "hobby"
+  - Temporal markers: "temporal-fact", "episodic-experience"
+  - Entity names when distinctive (e.g., "gps-system", "dealership")
+
+<working-slot>
+{dump_slot_json}
+</working-slot>
+
+Output STRICTLY as JSON inside the tags:
+<episodic-record>
+{{
+    "stage": "{stage}",
+    "summary": "≤80 word What → When → Who/Where → Outcome narrative preserving user's personal experience",
+    "detail": {{
+        "session_id": "exact session ID from attachments.session_ids[0] (e.g., 'answer_4be1b6b4_2')",
+        "situation": "Background context, user state, setting (e.g., 'User owns new car, first scheduled maintenance')",
+        "actions": ["chronological user actions or events (e.g., 'brought car to dealership', 'service completed')"],
+        "results": ["outcomes and reactions (e.g., 'great experience', 'GPS issue discovered week later')"],
+        "temporal_context": {{
+            "dates": ["extracted dates from attachments (e.g., 'March 15th', '3/22', '2023/04/10')"],
+            "temporal_cues": ["relative timing (e.g., 'first time', 'after first service', 'one week later')"],
+            "sequence": "optional: event ordering description if multiple events"
+        }},
+        "entities_involved": ["people, places, products, services from attachments.entities"],
+        "facts": ["atomic facts from attachments.facts for verification"]
+    }},
+    "tags": ["user-event or user-timeline or user-preference", "domain-hint", "temporal-fact", "episodic-experience"]
+}}
+</episodic-record>
+""")
+
+TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_FC = dedent("""
+Convert the WorkingSlot into an episodic memory record emphasizing the function-calling process: Intent → Tool Selection → Execution → Result.
+
+Expectations:
+- The episodic record captures **rare, reusable FC failure/recovery patterns**, not generic playbooks.
+- `summary` (≤80 words) follows: Situation (trigger) → Action (what was tried) → Result (outcome) → Fix/Learning.
+- `detail` elaborates:
+  - "situation": User intent, available tools, constraints, trigger condition for this episode.
+  - "actions": Tool selection decisions, argument construction attempts, execution steps.
+  - "results": Success/failure, error messages, tool outputs.
+  - "fix": How the issue was resolved (if failure), generalized lesson.
+  - "trigger": Clear condition when this pattern applies.
+- Focus on **novel failure modes** or **non-obvious tactics**, not common best practices.
+- `tags` should mix:
+  - Stage: "tool-selection", "argument-construction", "error-handling"
+  - Outcome: "failure-recovered", "success-pattern"
+  - Tool-specific identifiers if relevant
+
+<working-slot>
+{dump_slot_json}
+</working-slot>
+
+Output STRICTLY as JSON inside the tags:
+<episodic-record>
+{{
+    "stage": "{stage}",
+    "summary": "≤80 word Situation → Action → Result → Fix narrative (e.g., 'Ambiguous location input triggered tool selection failure. Tried city-based get_weather, got 400 error. Fix: ask user to clarify between city name vs zip code, then route to correct tool variant.')",
+    "detail": {{
+        "situation": "User said 'weather in springfield' - ambiguous (multiple cities named Springfield)",
+        "actions": ["attempted get_weather_by_city with 'springfield'", "received 400 invalid_request_error: ambiguous location"],
+        "results": ["initial call failed", "error message: 'multiple matches for springfield'"],
+        "fix": "Ask clarification: 'Which Springfield? (IL, MA, MO, etc.)', then use get_weather_by_city with state qualifier",
+        "trigger": "Location input matches multiple cities; tool returns ambiguous location error"
+    }},
+    "tags": ["bfcl","function-calling","error-handling","ambiguous-input","episodic-experience"]
+}}
+</episodic-record>
+""")
+
+
+TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_EXPERIMENT = dedent("""
 Convert the WorkingSlot into a procedural memory entry that captures a reusable skill or checklist.
 
 <working-slot>
@@ -548,6 +767,109 @@ Output STRICTLY as JSON inside the tags:
     "steps": ["step 1","step 2","step 3"],
     "code": "optional snippet or empty string",
     "tags": ["keyword1","keyword2"]
+}}
+</procedural-record>
+""")
+
+TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_QA = dedent("""
+Convert the WorkingSlot into a procedural memory entry that captures a reusable QA strategy or checklist.
+
+Expectations:
+- The procedural record captures **step-by-step playbooks** for solving specific types of multi-hop questions.
+- `name`: Short, descriptive skill name (e.g., "bridge entity two-hop retrieval").
+- `description` (≤60 words): When/why to apply this strategy.
+- `steps`: Ordered, actionable steps (3-7 items) that are reusable across similar questions.
+- `code`: Optional pseudo-code or empty string.
+- `tags`: Question types this applies to.
+
+<working-slot>
+{dump_slot_json}
+</working-slot>
+
+Output STRICTLY as JSON inside the tags:
+<procedural-record>
+{{
+    "name": "bridge entity two-hop retrieval",
+    "description": "Use when question requires connecting two entities through an intermediate bridge entity. Common for 'Where was X born' + 'What university in that city' patterns.",
+    "steps": [
+        "identify the bridge entity from question (often a person or location)",
+        "retrieve Wikipedia page for bridge entity",
+        "extract the linking attribute (birthplace, location, affiliation)",
+        "search for target entity using the linking attribute as constraint",
+        "verify target entity meets all question criteria"
+    ],
+    "code": "",
+    "tags": ["hotpotqa","bridge-entity","two-hop","procedural-experience"]
+}}
+</procedural-record>
+""")
+
+TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_CHAT = dedent("""
+Convert the WorkingSlot into a procedural memory entry that captures a reusable pattern for handling personal chat memory.
+
+Expectations:
+- The procedural record captures **strategies for extracting, organizing, or reasoning over user's personal information**.
+- `name`: Short, descriptive skill name (e.g., "timeline reconstruction from scattered events").
+- `description` (≤60 words): When/why to apply this strategy in personal chat context.
+- `steps`: Ordered, actionable steps (3-7 items) for handling similar user information patterns.
+- `code`: Optional pseudo-code or empty string.
+- `tags`: User information types this applies to.
+
+<working-slot>
+{dump_slot_json}
+</working-slot>
+
+Output STRICTLY as JSON inside the tags:
+<procedural-record>
+{{
+    "name": "timeline reconstruction from events",
+    "description": "Use when user mentions multiple related events across sessions. Reconstruct chronological sequence to answer 'when/before/after/how long' questions about user's personal history.",
+    "steps": [
+        "extract all events related to the topic from attachments.facts",
+        "collect dates and temporal_cues for each event",
+        "order events chronologically using dates and relative cues",
+        "identify causal or dependency relationships between events",
+        "construct timeline sequence with explicit ordering",
+        "verify consistency with session_ids for provenance"
+    ],
+    "code": "",
+    "tags": ["chat","user-timeline","temporal-reasoning","procedural-experience"]
+}}
+</procedural-record>
+""")
+
+TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_FC = dedent("""
+Convert the WorkingSlot into a procedural memory entry that captures a reusable function-calling playbook.
+
+Expectations:
+- The procedural record captures **step-by-step checklists** for common FC tasks (argument filling, validation, error recovery).
+- `name`: Short, descriptive skill name (e.g., "no-assumption required-args protocol").
+- `description` (≤60 words): When/why to apply this protocol.
+- `steps`: Ordered, actionable steps (3-7 items) that are tool-agnostic where possible.
+  - May mention specific schema tokens when decisive.
+  - Must be grounded in evidence from the WorkingSlot.
+- `code`: Optional pseudo-code or empty string.
+- `tags`: FC stages and patterns this applies to.
+
+<working-slot>
+{dump_slot_json}
+</working-slot>
+
+Output STRICTLY as JSON inside the tags:
+<procedural-record>
+{{
+    "name": "no-assumption required-args protocol",
+    "description": "Apply when tool schema has required fields and system message forbids guessing. Ensures all required args are user-confirmed before calling tool.",
+    "steps": [
+        "extract required fields and enums from tool schema",
+        "diff required fields against user-provided information",
+        "if any required field missing: ask single clarification listing only missing fields",
+        "validate enum/value constraints against schema",
+        "construct tool call using only confirmed fields",
+        "re-check all required fields present and no conflicting constraints before sending"
+    ],
+    "code": "",
+    "tags": ["bfcl","function-calling","procedural-experience","arg-filling","no-assumption","validation"]
 }}
 </procedural-record>
 """)
