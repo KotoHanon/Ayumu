@@ -54,7 +54,7 @@ def check_args(args):
     print(args)
 
 
-def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, history_format: str, cot: bool, tokenizer, tokenizer_backend, max_retrieval_length, merge_key_expansion_into_value, slot_process, semantic_memory_system, episodic_memory_system, con=False, con_client=None, con_model=None, max_workers=50):    
+def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, history_format: str, cot: bool, tokenizer, tokenizer_backend, max_retrieval_length, merge_key_expansion_into_value, slot_process_vllm, slot_process_openai, semantic_memory_system, episodic_memory_system, con=False, con_client=None, con_model=None, max_workers=50):    
     if retriever_type == 'no-retrieval':
         answer_prompt_template = '{}'
         if cot:
@@ -146,13 +146,13 @@ def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, his
             context_list.append(context)
     
         # transfer chat context to working slots, filter and route slots, and transfer slots to memory
-        _multi_thread_run(slot_process.transfer_chat_agent_context_to_working_slots, context_list, max_workers=max_workers)
-        working_slots = slot_process.total_working_slots.copy()
+        _multi_thread_run(slot_process_vllm.transfer_chat_agent_context_to_working_slots, context_list, max_workers=10)
+        working_slots = slot_process_vllm.total_working_slots.copy()
         print(f"[Info] Transferring session {session_id} to memories, number of working slots: {len(working_slots)}")
-        _multi_thread_run(slot_process.multi_thread_filter_and_route_slot, working_slots, max_workers=max_workers)
+        _multi_thread_run(slot_process_openai.multi_thread_filter_and_route_slot, working_slots, max_workers=max_workers)
 
-        _multi_thread_run(slot_process.multi_thread_transfer_slot_to_memory, slot_process.routed_slot_container, max_workers=max_workers)
-        asyncio.run(multi_thread_transfer_dicts_to_memories(slot_process, semantic_memory_system, episodic_memory_system))
+        _multi_thread_run(slot_process_openai.multi_thread_transfer_slot_to_memory, slot_process_openai.routed_slot_container, max_workers=max_workers)
+        asyncio.run(multi_thread_transfer_dicts_to_memories(slot_process_openai, semantic_memory_system, episodic_memory_system))
         
         print(f"[Info] Finished transferring, size of semantic memory: {semantic_memory_system.size}, size of episodic memory: {episodic_memory_system.size}")
         
@@ -388,24 +388,25 @@ async def abstract_episodic_records_to_semantic_record(epi_records: List[Episodi
         traceback.print_exc()
 
 def reset_memprism_system(args):
-    '''if "gpt" in args.model_name.lower():
+    if "gpt" in args.model_name.lower():
         llm_backend = "openai"
     else:
         llm_backend = "vllm"
 
-    slot_process = SlotProcess(llm_name=args.model_alias, llm_backend=llm_backend, task="chat")
+    slot_process_vllm = SlotProcess(llm_name="qwen3-4b", llm_backend="vllm", task="chat")
+    slot_process_openai = SlotProcess(llm_name="gpt-4o-mini", llm_backend="openai", task="chat")
     semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_model=args.model_alias, llm_backend=llm_backend)
-    episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_model=args.model_alias, llm_backend=llm_backend)'''
+    episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_model=args.model_alias, llm_backend=llm_backend)
 
-    slot_process = SlotProcess(task="chat")
+    '''slot_process = SlotProcess(task="chat")
     semantic_memory_system = FAISSMemorySystem(llm_backend="openai")
-    episodic_memory_system = FAISSMemorySystem(llm_backend="openai")
+    episodic_memory_system = FAISSMemorySystem(llm_backend="openai")'''
 
-    return slot_process, semantic_memory_system, episodic_memory_system
+    return slot_process_vllm, slot_process_openai, semantic_memory_system, episodic_memory_system
 
 def get_related_information_by_query(query: str, semantic_memory_system: FAISSMemorySystem, episodic_memory_system: FAISSMemorySystem, limit: int = 10):
     semantic_query_results = semantic_memory_system.query(query, limit=limit)
-    episodic_query_results = episodic_memory_system.query(query, limit=(2 * limit))
+    episodic_query_results = episodic_memory_system.query(query, limit=limit)
 
     semantic_records = [record for score, record in semantic_query_results]
     episodic_records = [record for score, record in episodic_query_results]
@@ -438,7 +439,7 @@ def main(args):
         base_url=args.openai_base_url,
     )
 
-    slot_process, semantic_memory_system, episodic_memory_system = reset_memprism_system(args)
+    slot_process_vllm, slot_process_openai, semantic_memory_system, episodic_memory_system = reset_memprism_system(args)
 
     try:
         in_data = json.load(open(args.in_file))
@@ -490,18 +491,18 @@ def main(args):
             prompt = prepare_prompt(entry, args.retriever_type, args.topk_context, args.useronly=='true',
                                     args.history_format, args.cot=='true', 
                                     tokenizer=tokenizer, tokenizer_backend=tokenizer_backend, max_retrieval_length=max_retrieval_length,
-                                    merge_key_expansion_into_value=args.merge_key_expansion_into_value, slot_process=slot_process,
+                                    merge_key_expansion_into_value=args.merge_key_expansion_into_value, slot_process_vllm=slot_process_vllm, slot_process_openai=slot_process_openai,
                                     semantic_memory_system=semantic_memory_system, episodic_memory_system=episodic_memory_system,
                                     con=True, con_client=client, con_model=args.model_name)
         else:
             prompt = prepare_prompt(entry, args.retriever_type, args.topk_context, args.useronly=='true',
                                     args.history_format, args.cot=='true', 
                                     tokenizer=tokenizer, tokenizer_backend=tokenizer_backend, max_retrieval_length=max_retrieval_length,
-                                    merge_key_expansion_into_value=args.merge_key_expansion_into_value, slot_process=slot_process,
+                                    merge_key_expansion_into_value=args.merge_key_expansion_into_value, slot_process_vllm=slot_process_vllm, slot_process_openai=slot_process_openai,
                                     semantic_memory_system=semantic_memory_system, episodic_memory_system=episodic_memory_system,)
 
         # reset MemPrism system after each example
-        slot_process, semantic_memory_system, episodic_memory_system = reset_memprism_system(args)
+        slot_process_vllm, slot_process_openai, semantic_memory_system, episodic_memory_system = reset_memprism_system(args)
 
         try:
             print(json.dumps({'question_id': entry['question_id'], 'question': entry['question'], 'answer': entry['answer']}, indent=4), flush=True)

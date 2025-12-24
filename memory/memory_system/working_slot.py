@@ -49,6 +49,9 @@ class WorkingSlot(SlotPayload):
             user_prompt = WORKING_SLOT_FC_FILTER_USER_PROMPT.format(slot_dump=dump_slot_json(self))
         elif task == "chat":
             user_prompt = WORKING_SLOT_CHAT_FILTER_USER_PROMPT.format(slot_dump=dump_slot_json(self))
+        
+        user_prompt += " /no_think"
+
         out = await llm.complete(system_prompt, user_prompt)
         out = out.strip().lower()
 
@@ -63,6 +66,8 @@ class WorkingSlot(SlotPayload):
     async def slot_router(self, llm: LLMClient) -> Literal["semantic", "procedural", "episodic"]:
         system_prompt = "You are a memory type classifier. Only output legal string: 'semantic', 'procedural', or 'episodic'."
         user_prompt = WORKING_SLOT_ROUTE_USER_PROMPT.format(slot_dump=dump_slot_json(self))
+        user_prompt += " /no_think"
+
         out = await llm.complete(system_prompt, user_prompt)
         out = out.strip().lower()
 

@@ -331,6 +331,8 @@ class SlotProcess:
             snapshot=context,
         )
 
+        user_prompt += " /no_think"
+
         schema = Schema(max_slots=max_slots)
         chat_task_slot_schema = schema.CHAT_TASK_SLOT_SCHEMA
 
@@ -539,7 +541,12 @@ class SlotProcess:
             )
             user_prompt = TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_CHAT.format(dump_slot_json=dump_slot_json(slot))
 
+        user_prompt += " /no_think"
+
         response = await self.llm_model.complete(system_prompt=system_prompt, user_prompt=user_prompt)
+        response.lower().strip()
+        response = response.replace("<think>", "").replace("</think>", "")
+
         payload = _extract_json_between(response, "semantic-record", "semantic-record")
 
         summary = payload.get("summary") or slot.summary
@@ -592,7 +599,12 @@ class SlotProcess:
             )
             user_prompt = TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_CHAT.format(dump_slot_json=dump_slot_json(slot), stage=slot.stage)
 
+        user_prompt += " /no_think"
+
         response = await self.llm_model.complete(system_prompt=system_prompt, user_prompt=user_prompt)
+        response.lower().strip()
+        response = response.replace("<think>", "").replace("</think>", "")
+
         payload = _extract_json_between(response, "episodic-record", "episodic-record")
 
         stage = payload.get("stage") or slot.stage
@@ -646,7 +658,12 @@ class SlotProcess:
             )
             user_prompt = TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_CHAT.format(dump_slot_json=dump_slot_json(slot))
 
+        user_prompt += " /no_think"
+
         response = await self.llm_model.complete(system_prompt=system_prompt, user_prompt=user_prompt)
+        response.lower().strip()
+        response = response.replace("<think>", "").replace("</think>", "")
+        
         payload = _extract_json_between(response, "procedural-record", "procedural-record")
 
         name = payload.get("name") or slot.topic or "skill"
