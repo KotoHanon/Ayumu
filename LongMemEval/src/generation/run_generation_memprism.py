@@ -148,8 +148,8 @@ def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, his
             context_list.append(context)
     
         # transfer chat context to working slots, filter and route slots, and transfer slots to memory
-        _multi_thread_run(slot_process_vllm.transfer_chat_agent_context_to_working_slots, context_list, max_workers=10)
-        working_slots = slot_process_vllm.total_working_slots.copy()           
+        _multi_thread_run(slot_process_openai.transfer_chat_agent_context_to_working_slots, context_list, max_workers=max_workers)
+        working_slots = slot_process_openai.total_working_slots.copy()           
         print(f"[Info] Transferring session {session_id} to memories, number of working slots: {len(working_slots)}")
         _multi_thread_run(slot_process_openai.multi_thread_filter_and_route_slot, working_slots, max_workers=max_workers)
 

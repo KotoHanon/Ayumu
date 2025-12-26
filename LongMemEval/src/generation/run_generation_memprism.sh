@@ -35,7 +35,7 @@ model=${model_zoo["$model_alias"]}
 if [[ $model_alias == "gpt-4o" || $model_alias == "gpt-4o-mini" ]]; then
     # will call openai server
     openai_base_url_flag="--openai_base_url https://api.xi-ai.cn/v1"
-    openai_key="sk-CTESuyV0v4QQncBZBd291d85EbC94c2795698e1cA84f65Ca"
+    openai_key="sk-TUkxt3aRk2RqY94xEaEd4d5eE66d40298a27279aD83b4b43"
     openai_org_flag="--openai_organization YOUR_ORGANIZATION"   # uclanlp
 else
     # will call an openai server emulator served by e.g., vllm locally

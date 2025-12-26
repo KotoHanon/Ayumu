@@ -3,7 +3,7 @@ import asyncio
 import numpy as np
 import re
 
-from typing import Dict, Iterable, List, Literal, Optional, Tuple, Union, Any
+from typing import Dict, Iterable, List, Literal, Optional, Tuple, Union, Any, Callable
 from collections import deque
 from memory.memory_system.utils import (
     dump_slot_json, 
@@ -395,7 +395,7 @@ class SlotProcess:
                 response = response.strip()
                 response = response.replace("<think>", "").replace("</think>", "")
 
-                payload = _extract_json_between(response, record_tag, record_tag)
+                payload = json.loads(response)
                 
                 if not payload or not isinstance(payload, dict):
                     raise ValueError(f"Empty or invalid payload extracted from <{record_tag}>")
@@ -707,11 +707,11 @@ class SlotProcess:
 
         try:
             if memory_type == "semantic":
-                input_dict = asyncio.run(self.transfer_slot_to_semantic_record(slot))
+                input_dict = self.transfer_slot_to_semantic_record(slot)
             elif memory_type == "episodic":
-                input_dict = asyncio.run(self.transfer_slot_to_episodic_record(slot))
+                input_dict = self.transfer_slot_to_episodic_record(slot)
             elif memory_type == "procedural":
-                input_dict = asyncio.run(self.transfer_slot_to_procedural_record(slot,))
+                input_dict = self.transfer_slot_to_procedural_record(slot)
         except Exception as exc:
             print(
                 f"[MEMORY] Failed to convert slot {getattr(slot, 'id', 'unknown')} "
@@ -722,7 +722,7 @@ class SlotProcess:
         self.memory_dict.append({"memory_type": memory_type, "input": input_dict})
 
 
-    async def transfer_slot_to_semantic_record(self, slot: WorkingSlot) -> Dict[str, Any]:
+    def transfer_slot_to_semantic_record(self, slot: WorkingSlot) -> Dict[str, Any]:
         if self.task == "experiment":
             system_prompt = (
                 "You are a senior research archivist. Convert the WorkingSlot into a reusable "
@@ -786,7 +786,7 @@ class SlotProcess:
             max_tokens=2048,
         )
 
-    async def transfer_slot_to_episodic_record(self, slot: WorkingSlot) -> Dict[str, Any]:
+    def transfer_slot_to_episodic_record(self, slot: WorkingSlot) -> Dict[str, Any]:
         if self.task == "experiment":
             system_prompt = (
                 "You are a scientific lab journal assistant. Convert the WorkingSlot into an episodic "
@@ -852,7 +852,7 @@ class SlotProcess:
             max_tokens=2048,
         )
 
-    async def transfer_slot_to_procedural_record(self, slot: WorkingSlot) -> Dict[str, Any]:
+    def transfer_slot_to_procedural_record(self, slot: WorkingSlot) -> Dict[str, Any]:
         if self.task == "experiment":
             system_prompt = (
                 "You are an expert operations documenter. Convert the WorkingSlot into a procedural "

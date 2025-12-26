@@ -550,14 +550,13 @@ Expectations:
 {dump_slot_json}
 </working-slot>
 
-Output STRICTLY as JSON inside the tags, with no extra text:
-<semantic-record>
+**DO NOT wrap your JSON output in markdown code blocks (```json or ```). Output raw JSON only.**
+Output STRICTLY as JSON:
 {{
     "summary": "semantic evidence summary",
     "detail": "expanded factual evidence and context",
     "tags": ["keyword1","keyword2"]
 }}
-</semantic-record>
 """)
 
 TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_QA = dedent("""
@@ -581,14 +580,13 @@ Expectations:
 {dump_slot_json}
 </working-slot>
 
-Output STRICTLY as JSON inside the tags, with no extra text:
-<semantic-record>
+**DO NOT wrap your JSON output in markdown code blocks (```json or ```). Output raw JSON only.**
+Output STRICTLY as JSON:
 {{
     "summary": "Compact factual evidence (e.g., 'Albert Einstein was born in Ulm, Germany on March 14, 1879. He received Nobel Prize in Physics in 1921.')",
     "detail": "Atomic fact 1: Einstein birthplace is Ulm, Germany.\\nAtomic fact 2: Birth date March 14, 1879.\\nAtomic fact 3: Nobel Prize Physics 1921.\\nSource: Wikipedia:Albert_Einstein",
     "tags": ["hotpotqa","wikipedia","albert-einstein","birthplace","nobel-prize"]
 }}
-</semantic-record>
 """)
 
 TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_CHAT = dedent("""
@@ -613,14 +611,13 @@ Expectations:
 {dump_slot_json}
 </working-slot>
 
-Output STRICTLY as JSON inside the tags, with no extra text:
-<semantic-record>
+**DO NOT wrap your JSON output in markdown code blocks (```json or ```). Output raw JSON only.**
+Output STRICTLY as JSON:
 {{
     "summary": "Compact user fact (e.g., 'User owns a new car, gets regular service at dealership, uses Shell gas station rewards program.')",
     "detail": "Fact 1: User owns new car (mentioned in session answer_4be1b6b4_2).\\nFact 2: Prefers dealership for service.\\nFact 3: Active Shell rewards program member.\\nFact 4: Tracks gas mileage (avg 32 mpg).\\nProvenance: sessions answer_4be1b6b4_2, answer_4be1b6b4_3",
     "tags": ["car","user-preference","semantic-evidence","rewards-program"]
 }}
-</semantic-record>
 """)
 
 TRANSFER_SLOT_TO_SEMANTIC_RECORD_PROMPT_FC = dedent("""
@@ -645,14 +642,13 @@ Expectations:
 {dump_slot_json}
 </working-slot>
 
-Output STRICTLY as JSON inside the tags, with no extra text:
-<semantic-record>
+**DO NOT wrap your JSON output in markdown code blocks (```json or ```). Output raw JSON only.**
+Output STRICTLY as JSON:
 {{
     "summary": "Compact tool constraint (e.g., 'get_weather requires location (enum: city names) and units (enum: celsius/fahrenheit). No defaults; must ask user if missing.')",
     "detail": "Tool: get_weather\\nRequired: location (type: enum[city_names]), units (type: enum[celsius, fahrenheit])\\nConstraint: no assumption rule - ask clarification if either field missing\\nEnum validation: units must match exactly 'celsius' or 'fahrenheit'\\nSource: tool schema + no-assumption system message",
     "tags": ["bfcl","function-calling","get-weather","required-field","enum-constraint","no-assumption"]
 }}
-</semantic-record>
 """)
 
 TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_EXPRIMENT = dedent("""
@@ -662,8 +658,8 @@ Convert the WorkingSlot into an episodic memory record emphasizing Situation →
 {dump_slot_json}
 </working-slot>
 
-Output STRICTLY as JSON inside the tags:
-<episodic-record>
+**DO NOT wrap your JSON output in markdown code blocks (```json or ```). Output raw JSON only.**
+Output STRICTLY as JSON:
 {{
     "stage": "{stage}",
     "summary": "≤80 word Situation → Action → Result overview",
@@ -676,7 +672,6 @@ Output STRICTLY as JSON inside the tags:
     }},
     "tags": ["keyword1","keyword2"]
 }}
-</episodic-record>
 """)
 
 TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_QA = dedent("""
@@ -700,8 +695,8 @@ Expectations:
 {dump_slot_json}
 </working-slot>
 
-Output STRICTLY as JSON inside the tags:
-<episodic-record>
+**DO NOT wrap your JSON output in markdown code blocks (```json or ```). Output raw JSON only.**
+Output STRICTLY as JSON:
 {{
     "stage": "{stage}",
     "summary": "≤80 word Question Type → Strategy → Result narrative (e.g., 'Bridge entity question about birthplace and university. Strategy: retrieve person's birthplace first, then search university in that city. Result: successfully found answer.')",
@@ -713,7 +708,6 @@ Output STRICTLY as JSON inside the tags:
     }},
     "tags": ["hotpotqa","bridge-entity","two-hop","episodic-experience","success"]
 }}
-</episodic-record>
 """)
 
 TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_CHAT = dedent("""
@@ -748,8 +742,8 @@ Expectations:
 {dump_slot_json}
 </working-slot>
 
-Output STRICTLY as JSON inside the tags (ALL fields must be non-empty):
-<episodic-record>
+**DO NOT wrap your JSON output in markdown code blocks (```json or ```). Output raw JSON only.**
+Output STRICTLY as JSON:
 {{
     "stage": "{stage}",
     "summary": "Rewritten narrative: User [ACTION] [WHEN if known] [CONTEXT] [OUTCOME]. Example: 'User sought band recommendations similar to The Electric Storm after attending their concert at a music festival. Looking for similar indie rock artists.'",
@@ -768,7 +762,6 @@ Output STRICTLY as JSON inside the tags (ALL fields must be non-empty):
     }},
     "tags": ["event-type", "domain", "episodic-experience"]
 }}
-</episodic-record>
 """)
 
 TRANSFER_SLOT_TO_EPISODIC_RECORD_PROMPT_FC = dedent("""
@@ -793,8 +786,8 @@ Expectations:
 {dump_slot_json}
 </working-slot>
 
-Output STRICTLY as JSON inside the tags:
-<episodic-record>
+**DO NOT wrap your JSON output in markdown code blocks (```json or ```). Output raw JSON only.**
+Output STRICTLY as JSON:
 {{
     "stage": "{stage}",
     "summary": "≤80 word Situation → Action → Result → Fix narrative (e.g., 'Ambiguous location input triggered tool selection failure. Tried city-based get_weather, got 400 error. Fix: ask user to clarify between city name vs zip code, then route to correct tool variant.')",
@@ -807,7 +800,6 @@ Output STRICTLY as JSON inside the tags:
     }},
     "tags": ["bfcl","function-calling","error-handling","ambiguous-input","episodic-experience"]
 }}
-</episodic-record>
 """)
 
 
@@ -818,8 +810,8 @@ Convert the WorkingSlot into a procedural memory entry that captures a reusable 
 {dump_slot_json}
 </working-slot>
 
-Output STRICTLY as JSON inside the tags:
-<procedural-record>
+**DO NOT wrap your JSON output in markdown code blocks (```json or ```). Output raw JSON only.**
+Output STRICTLY as JSON:
 {{
     "name": "short skill name",
     "description": "≤60 words explaining when/why to apply it",
@@ -827,7 +819,6 @@ Output STRICTLY as JSON inside the tags:
     "code": "optional snippet or empty string",
     "tags": ["keyword1","keyword2"]
 }}
-</procedural-record>
 """)
 
 TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_QA = dedent("""
@@ -845,8 +836,8 @@ Expectations:
 {dump_slot_json}
 </working-slot>
 
-Output STRICTLY as JSON inside the tags:
-<procedural-record>
+**DO NOT wrap your JSON output in markdown code blocks (```json or ```). Output raw JSON only.**
+Output STRICTLY as JSON:
 {{
     "name": "bridge entity two-hop retrieval",
     "description": "Use when question requires connecting two entities through an intermediate bridge entity. Common for 'Where was X born' + 'What university in that city' patterns.",
@@ -860,7 +851,6 @@ Output STRICTLY as JSON inside the tags:
     "code": "",
     "tags": ["hotpotqa","bridge-entity","two-hop","procedural-experience"]
 }}
-</procedural-record>
 """)
 
 TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_CHAT = dedent("""
@@ -878,8 +868,8 @@ Expectations:
 {dump_slot_json}
 </working-slot>
 
-Output STRICTLY as JSON inside the tags:
-<procedural-record>
+**DO NOT wrap your JSON output in markdown code blocks (```json or ```). Output raw JSON only.**
+Output STRICTLY as JSON:
 {{
     "name": "timeline reconstruction from events",
     "description": "Use when user mentions multiple related events across sessions. Reconstruct chronological sequence to answer 'when/before/after/how long' questions about user's personal history.",
@@ -894,7 +884,6 @@ Output STRICTLY as JSON inside the tags:
     "code": "",
     "tags": ["chat","user-timeline","temporal-reasoning","procedural-experience"]
 }}
-</procedural-record>
 """)
 
 TRANSFER_SLOT_TO_PROCEDURAL_RECORD_PROMPT_FC = dedent("""
@@ -914,8 +903,8 @@ Expectations:
 {dump_slot_json}
 </working-slot>
 
-Output STRICTLY as JSON inside the tags:
-<procedural-record>
+**DO NOT wrap your JSON output in markdown code blocks (```json or ```). Output raw JSON only.**
+Output STRICTLY as JSON:
 {{
     "name": "no-assumption required-args protocol",
     "description": "Apply when tool schema has required fields and system message forbids guessing. Ensures all required args are user-confirmed before calling tool.",
@@ -930,5 +919,4 @@ Output STRICTLY as JSON inside the tags:
     "code": "",
     "tags": ["bfcl","function-calling","procedural-experience","arg-filling","no-assumption","validation"]
 }}
-</procedural-record>
 """)
