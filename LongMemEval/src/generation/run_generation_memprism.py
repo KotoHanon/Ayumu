@@ -56,7 +56,7 @@ def check_args(args):
     print(args)
 
 
-def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, history_format: str, cot: bool, tokenizer, tokenizer_backend, max_retrieval_length, merge_key_expansion_into_value, slot_process_vllm, slot_process_openai, semantic_memory_system, episodic_memory_system, con=False, con_client=None, con_model=None, max_workers=50):    
+def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, history_format: str, cot: bool, tokenizer, tokenizer_backend, max_retrieval_length, merge_key_expansion_into_value, slot_process, semantic_memory_system, episodic_memory_system, con=False, con_client=None, con_model=None, max_workers=10):    
     if retriever_type == 'no-retrieval':
         answer_prompt_template = '{}'
         if cot:
@@ -148,17 +148,17 @@ def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, his
             context_list.append(context)
     
         # transfer chat context to working slots, filter and route slots, and transfer slots to memory
-        _multi_thread_run(slot_process_openai.transfer_chat_agent_context_to_working_slots, context_list, max_workers=max_workers)
-        working_slots = slot_process_openai.total_working_slots.copy()           
+        _multi_thread_run(slot_process.transfer_chat_agent_context_to_working_slots, context_list, max_workers=max_workers)
+        working_slots = slot_process.total_working_slots.copy()           
         print(f"[Info] Transferring session {session_id} to memories, number of working slots: {len(working_slots)}")
-        _multi_thread_run(slot_process_openai.multi_thread_filter_and_route_slot, working_slots, max_workers=max_workers)
+        _multi_thread_run(slot_process.multi_thread_filter_and_route_slot, working_slots, max_workers=max_workers)
 
-        _multi_thread_run(slot_process_openai.multi_thread_transfer_slot_to_memory, slot_process_openai.routed_slot_container, max_workers=max_workers)
-        asyncio.run(multi_thread_transfer_dicts_to_memories(slot_process_openai, semantic_memory_system, episodic_memory_system))
+        _multi_thread_run(slot_process.multi_thread_transfer_slot_to_memory, slot_process.routed_slot_container, max_workers=max_workers)
+        asyncio.run(multi_thread_transfer_dicts_to_memories(slot_process, semantic_memory_system, episodic_memory_system))
         
         print(f"[Info] Finished transferring, size of semantic memory: {semantic_memory_system.size}, size of episodic memory: {episodic_memory_system.size}")
         
-        semantic_records, episodic_records, session_ids = get_related_information_by_query(query=question_string, slot_process=slot_process_vllm, working_slots=working_slots, semantic_memory_system=semantic_memory_system, episodic_memory_system=episodic_memory_system)
+        semantic_records, episodic_records, session_ids = get_related_information_by_query(query=question_string, slot_process=slot_process, working_slots=working_slots, semantic_memory_system=semantic_memory_system, episodic_memory_system=episodic_memory_system)
 
         # clean up retrieved chunks
         retrieved_chunks = []
@@ -322,11 +322,11 @@ def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, his
         episodic_memories_str = ""
 
         if len(semantic_records) > 0:
-            semantic_memories_str = "\n".join(f"- {record.summary}" for record in semantic_records[:9])
+            semantic_memories_str = "\n".join(f"- {record.summary}" for record in semantic_records[:5])
         if len(episodic_records) > 0:
-            episodic_memories_str = "\n".join(f"- {_safe_dump_str(record.detail)}" for record in episodic_records[:9])        
+            episodic_memories_str = "\n".join(f"- {_safe_dump_str(record.detail)}" for record in episodic_records[:5])        
 
-        history_string += f'\n### Related Semantic Memory: {semantic_memories_str}\n### Related Episodic Memory: {episodic_memories_str}\n'
+        history_string += f'Here are some related memories for you to answer this query: \n### Related Semantic Memory: {semantic_memories_str}\n### Related Episodic Memory: {episodic_memories_str}\n'
 
     assert retriever_type == "no-retrieval" or history_string != ""
     if retriever_type == "no-retrieval":
@@ -395,8 +395,7 @@ def reset_memprism_system(args):
     else:
         llm_backend = "vllm"
 
-    slot_process_vllm = SlotProcess(llm_name="qwen3-4b", llm_backend="vllm", task="chat")
-    slot_process_openai = SlotProcess(llm_name="gpt-4o-mini", llm_backend="openai", task="chat")
+    slot_process = SlotProcess(llm_name="qwen3-4b", llm_backend=llm_backend, task="chat")
     semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_model=args.model_alias, llm_backend=llm_backend)
     episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_model=args.model_alias, llm_backend=llm_backend)
 
@@ -404,15 +403,38 @@ def reset_memprism_system(args):
     semantic_memory_system = FAISSMemorySystem(llm_backend="openai")
     episodic_memory_system = FAISSMemorySystem(llm_backend="openai")'''
 
-    return slot_process_vllm, slot_process_openai, semantic_memory_system, episodic_memory_system
+    return slot_process, semantic_memory_system, episodic_memory_system
 
-def get_related_information_by_query(query: str, slot_process: SlotProcess, working_slots: List[WorkingSlot], semantic_memory_system: FAISSMemorySystem, episodic_memory_system: FAISSMemorySystem, limit: int = 40):
+def get_related_information_by_query(query: str, slot_process: SlotProcess, working_slots: List[WorkingSlot], semantic_memory_system: FAISSMemorySystem, episodic_memory_system: FAISSMemorySystem, limit: int = 10):
     semantic_query_results = semantic_memory_system.query(query, limit=limit, threshold=0.5)
     episodic_query_results = episodic_memory_system.query(query, limit=limit)
 
-    keyword_prompt = f"Given a query: \n{query}\nExtract the 5 keywords that can represent the main idea of the query in a space-separated format. For example, if the query is 'What are the health benefits of regular exercise?', the keywords could be 'health benefits exercise'. You also can use phrases as keywords. Please only output the keywords without any additional explanation."
+    keyword_prompt = f"""
+Given the query:
+{query}
+
+Task:
+1) Extract keywords/short phrases that represent the main idea of the query.
+2) Add related/associated keywords that a user might mean or search for.
+3) Add synonyms or alternative phrasings for important terms.
+
+Output rules (MANDATORY):
+- Output exactly 10 distinct keywords or short phrases, comma-separated.
+- Use only lowercase letters, no surrounding quotes, no other commentary or explanation.
+- Do NOT use markdown code blocks (```) or any extra text.
+- Avoid punctuation inside keywords; limit each keyword/phrase to at most 4 words.
+- Order them by relevance: first 3 = directly extracted from the query; next 4 = related/associated; last 3 = synonyms/variants.
+- If fewer than 10 natural keywords exist, pad with the most relevant single-word stems.
+- Ensure there are no duplicates.
+
+Example (for clarity only — DO NOT output the example):
+For query "What are the health benefits of regular exercise?" a valid output might be:
+health,benefits,exercise,physical activity,cardio,mental health,weight loss,wellness,exercise advantages,regular workout
+
+Now output the 10 keywords for the query above. /no_think
+""".strip()
     kwargs = {
-        'model': "gpt-4o-mini",
+        'model': "qwen3-4b",
         'messages':[
             {"role": "user", "content": keyword_prompt}
         ],
@@ -425,7 +447,9 @@ def get_related_information_by_query(query: str, slot_process: SlotProcess, work
         base_url=args.openai_base_url,
     )
     key_words = chat_completions_with_backoff(client, **kwargs).choices[0].message.content.strip()
-    slots_query_results = slot_process.query(query, working_slots, key_words=key_words.split(), limit=limit, use_svd=True, embed_func=semantic_memory_system.vector_store._embed)
+    key_words = key_words.replace('<think>', '').replace('</think>', '').replace('\n', '').strip()
+    print(f"[Info] Extracted key words for query '{query}': {key_words}")
+    slots_query_results = slot_process.query(query, working_slots, key_words=key_words.split(','), limit=limit, use_svd=True, embed_func=semantic_memory_system.vector_store._embed)
 
     semantic_records = [record for score, record in semantic_query_results]
     episodic_records = [record for score, record in episodic_query_results]
@@ -467,7 +491,7 @@ def main(args):
         base_url=args.openai_base_url,
     )
 
-    slot_process_vllm, slot_process_openai, semantic_memory_system, episodic_memory_system = reset_memprism_system(args)
+    slot_process, semantic_memory_system, episodic_memory_system = reset_memprism_system(args)
 
     try:
         in_data = json.load(open(args.in_file))
@@ -481,6 +505,10 @@ def main(args):
         except:
             result_data = [json.loads(line) for line in open(args.resume_file).readlines()]
             already_done_question_ids = [entry['question_id'] for entry in result_data]
+
+    else:
+        already_done_question_ids = []
+        
 
 
     in_file_tmp = args.in_file.split('/')[-1]
@@ -534,18 +562,18 @@ def main(args):
             prompt = prepare_prompt(entry, args.retriever_type, args.topk_context, args.useronly=='true',
                                     args.history_format, args.cot=='true', 
                                     tokenizer=tokenizer, tokenizer_backend=tokenizer_backend, max_retrieval_length=max_retrieval_length,
-                                    merge_key_expansion_into_value=args.merge_key_expansion_into_value, slot_process_vllm=slot_process_vllm, slot_process_openai=slot_process_openai,
+                                    merge_key_expansion_into_value=args.merge_key_expansion_into_value, slot_process=slot_process,
                                     semantic_memory_system=semantic_memory_system, episodic_memory_system=episodic_memory_system,
                                     con=True, con_client=client, con_model=args.model_name)
         else:
             prompt = prepare_prompt(entry, args.retriever_type, args.topk_context, args.useronly=='true',
                                     args.history_format, args.cot=='true', 
                                     tokenizer=tokenizer, tokenizer_backend=tokenizer_backend, max_retrieval_length=max_retrieval_length,
-                                    merge_key_expansion_into_value=args.merge_key_expansion_into_value, slot_process_vllm=slot_process_vllm, slot_process_openai=slot_process_openai,
+                                    merge_key_expansion_into_value=args.merge_key_expansion_into_value, slot_process=slot_process,
                                     semantic_memory_system=semantic_memory_system, episodic_memory_system=episodic_memory_system,)
 
         # reset MemPrism system after each example
-        slot_process_vllm, slot_process_openai, semantic_memory_system, episodic_memory_system = reset_memprism_system(args)
+        slot_process, semantic_memory_system, episodic_memory_system = reset_memprism_system(args)
 
         try:
             print(json.dumps({'question_id': entry['question_id'], 'question': entry['question'], 'answer': entry['answer']}, indent=4), flush=True)

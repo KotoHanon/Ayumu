@@ -782,7 +782,7 @@ class SlotProcess:
             record_tag="semantic-record",
             slot=slot,
             post_process_payload=post_process_semantic,
-            max_retries=5,
+            max_retries=1,
             max_tokens=2048,
         )
 
@@ -848,7 +848,7 @@ class SlotProcess:
             record_tag="episodic-record",
             slot=slot,
             post_process_payload=post_process_episodic,
-            max_retries=5,
+            max_retries=1,
             max_tokens=2048,
         )
 
@@ -921,6 +921,6 @@ class SlotProcess:
             record_tag="procedural-record",
             slot=slot,
             post_process_payload=post_process_procedural,
-            max_retries=5,
+            max_retries=1,
             max_tokens=2048,
         )

@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 from typing import Dict, Iterable, List, Literal, Optional, Tuple, Union, Protocol
 from memory.memory_system.utils import new_id, dump_slot_json
@@ -55,8 +56,7 @@ class WorkingSlot(SlotPayload):
         out = await llm.complete(system_prompt, user_prompt)
         out = out.strip().lower()
 
-        out = out.replace('<think>', '').replace('</think>', '')
-        out = out.replace('<thinking>', '').replace('</thinking>', '')
+        out = re.search(r"\b(yes|no)\b", out).group(1)
 
         if out.strip().lower() not in ["yes", "no"]:
             raise ValueError(f"Invalid slot filter output: {out}")
@@ -71,8 +71,7 @@ class WorkingSlot(SlotPayload):
         out = await llm.complete(system_prompt, user_prompt)
         out = out.strip().lower()
 
-        out = out.replace('<think>', '').replace('</think>', '')
-        out = out.replace('<thinking>', '').replace('</thinking>', '')
+        out = re.search(r"\b(semantic|procedural|episodic)\b", out).group(1)
 
         if out.strip() not in ["semantic", "procedural", "episodic"]:
             raise ValueError(f"Invalid slot type: {out}")
