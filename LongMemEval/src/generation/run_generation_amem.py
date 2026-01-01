@@ -273,7 +273,7 @@ def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, his
         else:
             raise NotImplementedError
 
-        if retriever_type in ["orig-session", "flat-session", "oracle-session", "memprism-session"]:
+        if retriever_type in ["orig-session", "flat-session", "oracle-session", "amem-session"]:
             history_string += '\n### Session {}:\nSession Date: {}\nSession Content:\n{}\n'.format(i+1, chunk_date, sess_string)
         elif retriever_type in ["orig-turn", "flat-turn", "oracle-turn"]:  
             # history_string += '\n### Round {}:\nDate: {}\nRound Content:\n{}\n'.format(i+1, chunk_date, sess_string)

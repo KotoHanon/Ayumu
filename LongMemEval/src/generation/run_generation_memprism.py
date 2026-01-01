@@ -322,9 +322,9 @@ def prepare_prompt(entry, retriever_type, topk_context: int, useronly: bool, his
         episodic_memories_str = ""
 
         if len(semantic_records) > 0:
-            semantic_memories_str = "\n".join(f"- {record.summary}" for record in semantic_records[:5])
+            semantic_memories_str = "\n".join(f"- {record.summary}" for record in semantic_records[:9])
         if len(episodic_records) > 0:
-            episodic_memories_str = "\n".join(f"- {_safe_dump_str(record.detail)}" for record in episodic_records[:5])        
+            episodic_memories_str = "\n".join(f"- {_safe_dump_str(record.detail)}" for record in episodic_records[:9])        
 
         history_string += f'Here are some related memories for you to answer this query: \n### Related Semantic Memory: {semantic_memories_str}\n### Related Episodic Memory: {episodic_memories_str}\n'
 
@@ -399,10 +399,6 @@ def reset_memprism_system(args):
     semantic_memory_system = FAISSMemorySystem(memory_type="semantic", llm_model=args.model_alias, llm_backend=llm_backend)
     episodic_memory_system = FAISSMemorySystem(memory_type="episodic", llm_model=args.model_alias, llm_backend=llm_backend)
 
-    '''slot_process = SlotProcess(task="chat")
-    semantic_memory_system = FAISSMemorySystem(llm_backend="openai")
-    episodic_memory_system = FAISSMemorySystem(llm_backend="openai")'''
-
     return slot_process, semantic_memory_system, episodic_memory_system
 
 def get_related_information_by_query(query: str, slot_process: SlotProcess, working_slots: List[WorkingSlot], semantic_memory_system: FAISSMemorySystem, episodic_memory_system: FAISSMemorySystem, limit: int = 10):
@@ -449,7 +445,7 @@ Now output the 10 keywords for the query above. /no_think
     key_words = chat_completions_with_backoff(client, **kwargs).choices[0].message.content.strip()
     key_words = key_words.replace('<think>', '').replace('</think>', '').replace('\n', '').strip()
     print(f"[Info] Extracted key words for query '{query}': {key_words}")
-    slots_query_results = slot_process.query(query, working_slots, key_words=key_words.split(','), limit=limit, use_svd=True, embed_func=semantic_memory_system.vector_store._embed)
+    slots_query_results = slot_process.query(query, working_slots, key_words=key_words.split(','), limit=limit, use_svd=False, embed_func=semantic_memory_system.vector_store._embed)
 
     semantic_records = [record for score, record in semantic_query_results]
     episodic_records = [record for score, record in episodic_query_results]

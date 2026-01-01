@@ -14,7 +14,7 @@ from memory.memory_system import (
     OpenAIClient,
 )
 from memory.memory_system.user_prompt import ABSTRACT_EPISODIC_TO_SEMANTIC_PROMPT
-from memory.memory_system.utils import now_iso, new_id, _transfer_dict_to_semantic_text
+from memory.memory_system.utils import now_iso, new_id, _transfer_dict_to_semantic_text, _parse_json_response
 from memory.memory_system.denstream import DenStream
 from memory.api.base_memory_system_api import MemorySystem, MemorySystemConfig, SemanticRecordPayload, EpisodicRecordPayload, ProceduralRecordPayload
 from collections import defaultdict
@@ -22,6 +22,7 @@ from collections import defaultdict
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 class FAISSMemorySystem(MemorySystem):
+    llm = None
     def __init__(self, **kwargs):
         cfg = MemorySystemConfig(**kwargs)
 
@@ -179,7 +180,6 @@ class FAISSMemorySystem(MemorySystem):
             self, 
             epi_records: List[EpisodicRecord], 
             consistency_threshold: float = 0.8) -> Tuple[List[SemanticRecord], Dict[int, SemanticRecord]]:
-        # TODO: Debug
         assert self.memory_type == "episodic", "Clustering is only supported for episodic memory type."
 
         cidmap2mid: Dict[int, List] = defaultdict(list) # {cluster_id: episodic_record_id}
@@ -233,10 +233,11 @@ class FAISSMemorySystem(MemorySystem):
                     episodic_notes="\n\n".join(episodic_notes)
                 )
                 response = await self.llm.complete(system_prompt=system_prompt, user_prompt=user_prompt)
+                print(f"[Debug] LLM response for cluster {cl.id}:\n{response}\n")
 
                 # 1. Create new SemanticRecord, 2. Mark is_abstracted = True, 3. Set cluster_id, 4. Add to result list
                 try:
-                    sem_record_dict = json.loads(response)
+                    sem_record_dict = _parse_json_response(response)
                     sem_record_dict['id'] = new_id("sem")
                     sem_record = SemanticRecord.from_dict(sem_record_dict)
                     sem_record.is_abstracted = True
@@ -263,7 +264,6 @@ class FAISSMemorySystem(MemorySystem):
                     summary=sem_rec.summary,
                     detail=sem_rec.detail,
                     tags=sem_rec.tags,
-                    updated_at=now_iso(),
                 )
                 update_list.append(last_sem_rec)
                 self.global_cidmap2semrec[sem_rec.cluster_id] = last_sem_rec

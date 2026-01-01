@@ -11,7 +11,7 @@
 | query      | ✅ Debugged |
 | transfer_slot_to_text | ✅ Debugged |
 | transfer_qa_agent_context_to_working_slots | ✅ Debugged |
-| transfer_experiment_agent_context_to_working_slots | ❌ Not yet debugged |
+| transfer_experiment_agent_context_to_working_slots | ✅ Debugged |
 | generate_long_term_memory | ✅ Debugged |
 | transfer_slot_to_semantic_record | ✅ Debugged |
 | transfer_slot_to_episodic_record | ✅ Debugged |
