@@ -613,12 +613,12 @@ class MemPrismClient(BaseClient):
     def generate_response(self, query_text, slots, prompt, model="openai/gpt-4o-mini", temperature=0.01, force_json=False):
         return self.chat_with_memories(query_text=query_text, slots=slots, message=prompt, model=model, temperature=temperature, force_json=force_json)
 
-    async def transfer_context_to_slots(self, context: str, max_slots: int = 5) -> Optional[List[WorkingSlot]]:
+    def transfer_context_to_slots(self, context: str, max_slots: int = 5) -> Optional[List[WorkingSlot]]:
         print("[Info] Transferring context to working slots...")
 
         try:
-            working_slots = await self.slot_process.transfer_qa_agent_context_to_working_slots(context=context, max_slots=max_slots)
-            print("after await, len of working_slots =", len(working_slots))
+            working_slots = self.slot_process.transfer_qa_agent_context_to_working_slots(context=context, max_slots=max_slots)
+            print("len of working_slots =", len(working_slots))
         except Exception as e:
             import traceback
             print("[ERROR] transfer_qa_agent_context_to_working_slots failed:", repr(e))
@@ -633,36 +633,6 @@ class MemPrismClient(BaseClient):
             self.slot_process.add_slot(slot)
 
         return working_slots
-
-    async def transfer_slots_to_memories(self, is_abstract: bool = False):
-        if self.slot_process.get_container_size() == 0:
-            return
-
-        routed_slot_container = await self.slot_process.filter_and_route_slots()
-        try:
-            inputs = await self.slot_process.generate_long_term_memory(routed_slots=routed_slot_container, task="qa")
-        except Exception as e:
-            import traceback
-            print("[ERROR] generate_long_term_memory failed:", repr(e))
-            traceback.print_exc()
-
-        if not inputs or len(inputs) == 0:
-            return
-
-        semantic_records = []
-        episodic_records = []
-
-        for i in inputs:
-            if i['memory_type'] == 'semantic':
-                semantic_records.append(self.semantic_memory_system.instantiate_sem_record(**i['input']))
-            elif i['memory_type'] == 'episodic':
-                episodic_records.append(self.episodic_memory_system.instantiate_epi_record(**i['input']))
-        
-        if is_abstract and len(episodic_records) > 0:
-            await self.abstract_episodic_records_to_semantic_record(episodic_records)
-
-        self.semantic_memory_system.add(semantic_records)
-        self.episodic_memory_system.add(episodic_records)
 
     async def multi_thread_transfer_dicts_to_memories(self, is_abstract: bool = False):
         semantic_records = []
@@ -691,28 +661,6 @@ class MemPrismClient(BaseClient):
                 import traceback
                 print("[ERROR] upsert_normal_records for episodic_records failed:", repr(e))
                 traceback.print_exc()
-
-    async def load_inputs_to_memory_records(self, inputs: List[Dict[str, Any]]):
-        if not inputs or len(inputs) == 0:
-            return
-
-        semantic_records = []
-        episodic_records = []
-
-        for i in tqdm(inputs):
-            if i['memory_type'] == 'semantic':
-                semantic_records.append(semantic_memory_system.instantiate_sem_record(**i['input']))
-            elif i['memory_type'] == 'episodic':
-                episodic_records.append(semantic_memory_system.instantiate_epi_record(**i['input']))
-        
-        if is_abstract and len(episodic_records) > 0:
-            await self.abstract_episodic_records_to_semantic_record(episodic_records)
-
-        semantic_memory_system.add(semantic_records)
-        episodic_memory_system.add(episodic_records)
-
-        print(f"[Info] Number of semantic memories: {semantic_memory_system.size}")
-        print(f"[Info] Number of episodic memories: {episodic_memory_system.size}")
 
     async def abstract_episodic_records_to_semantic_record(self, epi_records: List[EpisodicRecord], consistency_threshold: float = 0.8):
         try:

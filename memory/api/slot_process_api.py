@@ -138,8 +138,7 @@ class SlotProcess:
         return self.routed_slot_container
 
     def multi_thread_filter_and_route_slot(self, slot: WorkingSlot):
-        #check_result = asyncio.run(slot.slot_filter(self.llm_model, task=self.task))
-        check_result = True
+        check_result = asyncio.run(slot.slot_filter(self.llm_model, task=self.task))
         if check_result == True:
             try:
                 route_result = asyncio.run(slot.slot_router(self.llm_model))
@@ -411,7 +410,7 @@ class SlotProcess:
 
         raise ValueError(f"Failed to create record after {max_retries} retries. Last error: {last_error}")
 
-    async def transfer_qa_agent_context_to_working_slots(self, context: str, max_slots: int = 20) -> List[WorkingSlot]:
+    def transfer_qa_agent_context_to_working_slots(self, context: str, max_slots: int = 20) -> List[WorkingSlot]:
         system_prompt = (
             "You are an expert workflow archivist. "
             "Transform the provided QA Agent context into WorkingSlot JSON objects. "
@@ -445,7 +444,7 @@ class SlotProcess:
 
         return working_slots
 
-    async def transfer_fc_agent_context_to_working_slots(self, context: str, max_slots: int = 50) -> List[WorkingSlot]:
+    def transfer_fc_agent_context_to_working_slots(self, context: str, max_slots: int = 50) -> List[WorkingSlot]:
         system_prompt = (
             "You are an expert tool-using agent archivist. "
             "Transform BFCL-style multi-turn tool-calling trajectories into reusable memory slots. "
@@ -479,47 +478,7 @@ class SlotProcess:
 
         return working_slots
 
-    async def transfer_experiment_agent_context_to_working_slots(self, context, state: str, max_slots: int = 50) -> List[WorkingSlot]:
-        
-        if state not in {"pre_analysis", "code_plan", "code_implement", "code_judge", "experiment_execute", "experiment_analysis"}:
-            return []
-
-        snapshot = _build_context_snapshot(context, state)
-
-        system_prompt = (
-            "You are an expert workflow archivist. "
-            "Transform the provided Experiment Agent context into WorkingSlot JSON objects. "
-            "Each slot must capture the stage, topic, summary (≤120 words), attachments, and tags. "
-            "Summaries must follow a Situation→Action→Result narrative whenever possible. "
-            "You MUST output at least one slot."
-        )
-
-        user_prompt = TRANSFER_EXPERIMENT_AGENT_CONTEXT_TO_WORKING_SLOTS_PROMPT.format(
-            max_slots=max_slots,
-            snapshot=snapshot,
-        )
-
-        schema = Schema(max_slots=max_slots)
-        experiment_task_slot_schema = schema.EXPERIMENT_TASK_SLOT_SCHEMA
-        allowed_keys = {"stage", "topic", "summary", "attachments", "tags"}
-
-        working_slots = self._retry_llm_to_slots(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            json_schema=experiment_task_slot_schema,
-            schema_name="EXPERIMENT_TASK_SLOT_SCHEMA",
-            allowed_keys=allowed_keys,
-            max_slots=max_slots,
-            max_retries=5,
-            max_tokens=4096,
-            post_process_slot=None,
-            context=snapshot,
-            is_async=False,
-        )
-
-        return working_slots
-
-    async def transfer_experiment_agent_context_to_working_slots(self, context, state: str, max_slots: int = 50) -> List[WorkingSlot]:
+    def transfer_experiment_agent_context_to_working_slots(self, context, state: str, max_slots: int = 50) -> List[WorkingSlot]:
         
         if state not in {"pre_analysis", "code_plan", "code_implement", "code_judge", "experiment_execute", "experiment_analysis"}:
             return []

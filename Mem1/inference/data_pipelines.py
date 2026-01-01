@@ -381,7 +381,7 @@ class MemPrismPipeline(Pipeline):
                     cur_turn_result = cur_response + search_results
                     if search_query not in self.search_query_cache:
                         self.search_query_cache.add(search_query)
-                        self.slots.extend(asyncio.run(self.llm_client.transfer_context_to_slots(context=memory)))
+                        self.slots.extend(self.llm_client.transfer_context_to_slots(context=memory))
             
             if internal_state:
                 # Store summary in results dictionary
