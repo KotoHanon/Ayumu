@@ -605,7 +605,7 @@ class OpenAIResponsesHandlerWithMemory(BaseHandler):
         print(f"[Info] Transferring memories from {num_routed_slots} slots to memory systems")
         _multi_thread_run(self.slot_process.multi_thread_transfer_slot_to_memory, row_data=routed_slots, max_workers=max_workers)
         # transfer memories to records
-        asyncio.run(self.multi_thread_transfer_dicts_to_memories(is_abstract=False))
+        asyncio.run(self.multi_thread_transfer_dicts_to_memories(is_abstract=True))
 
     async def abstract_episodic_records_to_semantic_record(self, epi_records: List[EpisodicRecord], consistency_threshold: float = 0.8):
         try:
